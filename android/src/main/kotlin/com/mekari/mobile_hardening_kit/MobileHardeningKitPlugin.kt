@@ -60,13 +60,14 @@ class MobileHardeningKitPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
 
   private fun collectSignals(expectedCertificate: String?, trustedAccessibilityPackages: Set<String>): List<Map<String, Any>> {
     val signals = mutableListOf<Map<String, Any>>()
-    fun add(type: String, confidence: String, vararg details: Pair<String, Any>) {
-      signals.add(mapOf(
-        "type" to type,
-        "confidence" to confidence,
-        "observedAt" to isoTimestamp(),
-        "metadata" to details.toMap()
-      ))
+    fun add(type: String, vararg details: Pair<String, Any>) {
+      signals.add(
+        mapOf(
+          "type" to type,
+          "observedAt" to isoTimestamp(),
+          "metadata" to details.toMap()
+        )
+      )
     }
 
     val rootArtifacts = listOf(
@@ -76,30 +77,37 @@ class MobileHardeningKitPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
       "/data/adb/magisk", "/sbin/.magisk", "/data/adb/ksu", "/data/adb/ap"
     ).filter { File(it).exists() }
     val testKeys = Build.TAGS?.contains("test-keys") == true
-    if (rootArtifacts.isNotEmpty()) {
-      add("root", "high", "artifacts" to rootArtifacts.take(8), "testKeys" to testKeys)
-    } else if (testKeys) {
-      add("root", "medium", "testKeys" to true)
-    }
+    val magiskManagerPackage = "com.topjohnwu.magisk"
+    val hasMagiskManager = runCatching {
+      context.packageManager.getPackageInfo(magiskManagerPackage, 0)
+    }.isSuccess
+    val rootDetails = mutableListOf<Pair<String, Any>>()
+    if (rootArtifacts.isNotEmpty()) rootDetails += "artifacts" to rootArtifacts.take(8)
+    if (testKeys) rootDetails += "testKeys" to true
+    if (hasMagiskManager) rootDetails += "managerPackage" to magiskManagerPackage
+    if (rootDetails.isNotEmpty()) add("root", *rootDetails.toTypedArray())
 
     val maps = runCatching { File("/proc/self/maps").readLines() }.getOrDefault(emptyList())
     val hookArtifacts = maps.asSequence().filter {
       val line = it.lowercase()
       listOf("frida", "gum-js-loop", "gadget", "xposed", "lsposed", "substrate", "libhooker").any(line::contains)
-    }.map { it.substringAfterLast(' ').take(120) }.distinct().take(8).toList()
+    }.mapNotNull { row ->
+      row.trim().split(Regex("\\s+"), limit = 6).getOrNull(5)
+        ?.removeSuffix(" (deleted)")?.take(120)
+    }.distinct().take(8).toList()
     val listeningPort = listeningFridaPort()
     if (hookArtifacts.isNotEmpty() || listeningPort != null) {
-      add("instrumentation", "high", "artifacts" to hookArtifacts, "tracerPort" to (listeningPort ?: 0))
+      add("instrumentation", "artifacts" to hookArtifacts, "tracerPort" to (listeningPort ?: 0))
     }
 
     if (Debug.isDebuggerConnected() || Debug.waitingForDebugger()) {
-      add("debuggerAttach", "high", "debuggerConnected" to Debug.isDebuggerConnected())
+      add("debuggerAttach", "debuggerConnected" to Debug.isDebuggerConnected())
     }
 
     if (expectedCertificate != null) {
       val installed = signingCertificateSha256()
       if (installed == null || !installed.equals(expectedCertificate.replace(":", "").lowercase(), true)) {
-        add("signatureMismatch", "high", "certificateAvailable" to (installed != null))
+        add("signatureMismatch", "certificateAvailable" to (installed != null))
       }
     }
 
@@ -109,21 +117,21 @@ class MobileHardeningKitPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
       Build.HARDWARE.contains("goldfish", true), Build.HARDWARE.contains("ranchu", true),
       Build.PRODUCT.contains("sdk", true), Build.MANUFACTURER.contains("Genymotion", true)
     ).count { it }
-    if (emulatorIndicators >= 2) add("emulator", "medium", "indicatorCount" to emulatorIndicators)
+    if (emulatorIndicators >= 2) add("emulator", "indicatorCount" to emulatorIndicators)
 
     val enabledServices = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
       ?.split(':').orEmpty().filter(String::isNotBlank)
     val externalPackages = enabledServices.map { it.substringBefore('/') }.filter { it != context.packageName }.distinct()
     val unknownPackages = externalPackages.filterNot(trustedAccessibilityPackages::contains)
     if (unknownPackages.isNotEmpty()) {
-      add("accessibilityUnrecognized", "low", "serviceCount" to unknownPackages.size)
+      add("accessibilityUnrecognized", "serviceCount" to unknownPackages.size)
     }
     val devMode = Settings.Global.getInt(context.contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
     val adbEnabled = Settings.Global.getInt(context.contentResolver, Settings.Global.ADB_ENABLED, 0) == 1
-    if (devMode || adbEnabled) add("devModeEnabled", "low", "developerOptions" to devMode, "usbDebugging" to adbEnabled)
+    if (devMode || adbEnabled) add("devModeEnabled", "developerOptions" to devMode, "usbDebugging" to adbEnabled)
 
     val externalDisplays = presentationDisplayCount()
-    if (externalDisplays > 0) add("externalDisplay", "medium", "displayCount" to externalDisplays)
+    if (externalDisplays > 0) add("externalDisplay", "displayCount" to externalDisplays)
     return signals
   }
 
@@ -202,7 +210,7 @@ class MobileHardeningKitPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
   private fun registerScreenshotCallback(target: Activity) {
     if (Build.VERSION.SDK_INT < 34 || sink == null || screenshotCallback != null) return
     val callback = Activity.ScreenCaptureCallback {
-      sink?.success(signal("screenshotTaken", "high", mapOf("source" to "systemCallback")))
+      sink?.success(signal("screenshotTaken", mapOf("source" to "systemCallback")))
     }
     target.registerScreenCaptureCallback(target.mainExecutor, callback)
     screenshotCallback = callback
@@ -215,8 +223,10 @@ class MobileHardeningKitPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
     screenshotCallback = null
   }
 
-  private fun signal(type: String, confidence: String, metadata: Map<String, Any>) = mapOf(
-    "type" to type, "confidence" to confidence, "observedAt" to isoTimestamp(), "metadata" to metadata
+  private fun signal(type: String, metadata: Map<String, Any>) = mapOf(
+    "type" to type,
+    "observedAt" to isoTimestamp(),
+    "metadata" to metadata
   )
 
   private fun presentationDisplayCount(): Int = displayManager
@@ -225,7 +235,7 @@ class MobileHardeningKitPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
 
   private fun emitExternalDisplayState() {
     val count = presentationDisplayCount()
-    sink?.success(signal("externalDisplay", if (count > 0) "medium" else "low", mapOf("connected" to (count > 0), "displayCount" to count)))
+    sink?.success(signal("externalDisplay", mapOf("connected" to (count > 0), "displayCount" to count)))
   }
 
   override fun onDisplayAdded(displayId: Int) = emitExternalDisplayState()

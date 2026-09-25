@@ -1,9 +1,20 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:mobile_hardening_kit/mobile_hardening_kit.dart';
 
 void main() => runApp(const HardeningExampleApp());
+
+Map<String, Object?> _rawSignal(HardeningSignal signal) => <String, Object?>{
+      'type': signal.type.name,
+      'observedAt': signal.observedAt.toUtc().toIso8601String(),
+      'metadata': signal.metadata,
+    };
+
+String _formatSignals(Iterable<HardeningSignal> signals) =>
+    const JsonEncoder.withIndent('  ')
+        .convert(signals.map(_rawSignal).toList(growable: false));
 
 class HardeningExampleApp extends StatelessWidget {
   const HardeningExampleApp({super.key});
@@ -11,6 +22,7 @@ class HardeningExampleApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'Mobile Hardening Kit',
+        debugShowCheckedModeBanner: false,
         theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
         home: const SignalExplorerPage(),
       );
@@ -25,7 +37,8 @@ class SignalExplorerPage extends StatefulWidget {
 
 class _SignalExplorerPageState extends State<SignalExplorerPage> {
   final MobileHardeningKit _kit = MobileHardeningKit();
-  final Set<HardeningSignal> _signals = <HardeningSignal>{};
+  final List<HardeningSignal> _snapshotSignals = <HardeningSignal>[];
+  final List<HardeningSignal> _streamSignals = <HardeningSignal>[];
   StreamSubscription<HardeningSignal>? _subscription;
   bool _loading = true;
   bool _protectionEnabled = false;
@@ -36,7 +49,7 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
     super.initState();
     _subscription = _kit.stream.listen(
       (signal) {
-        if (mounted) setState(() => _signals.add(signal));
+        if (mounted) setState(() => _streamSignals.add(signal));
       },
       onError: (Object error) {
         if (mounted) setState(() => _error = error);
@@ -54,7 +67,7 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
       final findings = await _kit.snapshot();
       if (!mounted) return;
       setState(() {
-        _signals
+        _snapshotSignals
           ..clear()
           ..addAll(findings);
         _loading = false;
@@ -114,23 +127,28 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
                 title: const Text('Signal collection failed'),
                 subtitle: Text('$_error'),
               ),
-            if (!_loading && _signals.isEmpty && _error == null)
-              const ListTile(
-                leading: Icon(Icons.verified_user_outlined),
-                title: Text('No signals detected'),
-                subtitle:
-                    Text('This is not proof that the device is uncompromised.'),
+            const SizedBox(height: 16),
+            const Text('Snapshot response (raw JSON)'),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: SelectableText(
+                  _formatSignals(_snapshotSignals),
+                  key: const ValueKey<String>('snapshot-signals-json'),
+                ),
               ),
-            ..._signals.map((signal) => Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.shield_outlined),
-                    title: Text(signal.type.name),
-                    subtitle: Text(
-                      '${signal.confidence.name} confidence · ${signal.observedAt.toLocal()}\n${signal.metadata}',
-                    ),
-                    isThreeLine: signal.metadata.isNotEmpty,
-                  ),
-                )),
+            ),
+            const SizedBox(height: 12),
+            const Text('Event stream (raw JSON)'),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: SelectableText(
+                  _formatSignals(_streamSignals),
+                  key: const ValueKey<String>('stream-signals-json'),
+                ),
+              ),
+            ),
           ],
         ),
       );

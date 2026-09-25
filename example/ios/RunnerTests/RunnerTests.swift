@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import XCTest
+
 @testable import mobile_hardening_kit
 
 final class RunnerTests: XCTestCase {
@@ -13,7 +14,11 @@ final class RunnerTests: XCTestCase {
       }
       let signals = try XCTUnwrap(response as? [[String: Any]])
       let emulator = try XCTUnwrap(signals.first { $0["type"] as? String == "emulator" })
-      XCTAssertEqual(emulator["confidence"] as? String, "high")
+      let types = signals.compactMap { $0["type"] as? String }
+      XCTAssertEqual(Set(types).count, types.count)
+      for signal in signals {
+        XCTAssertNil(signal["confidence"])
+      }
       XCTAssertEqual((emulator["metadata"] as? [String: String])?["environment"], "simulator")
     #else
       throw XCTSkip("Simulator signal is only emitted by simulator builds.")

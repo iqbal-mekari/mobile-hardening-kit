@@ -40,10 +40,9 @@ public class MobileHardeningKitPlugin: NSObject, FlutterPlugin, FlutterStreamHan
 
   private func collectSignals() -> [[String: Any]] {
     var signals: [[String: Any]] = []
-    func add(_ type: String, _ confidence: String, _ metadata: [String: Any] = [:]) {
+    func add(_ type: String, _ metadata: [String: Any] = [:]) {
       signals.append([
         "type": type,
-        "confidence": confidence,
         "observedAt": ISO8601DateFormatter().string(from: Date()),
         "metadata": metadata,
       ])
@@ -60,7 +59,7 @@ public class MobileHardeningKitPlugin: NSObject, FlutterPlugin, FlutterStreamHan
     }
     if !jailbreakPaths.isEmpty || !suspiciousSchemes.isEmpty {
       add(
-        "jailbreak", "high",
+        "jailbreak",
         ["artifacts": Array(jailbreakPaths.prefix(8)), "urlSchemes": suspiciousSchemes])
     }
 
@@ -74,7 +73,7 @@ public class MobileHardeningKitPlugin: NSObject, FlutterPlugin, FlutterStreamHan
       }
     }
     if !injectedLibraries.isEmpty {
-      add("instrumentation", "high", ["artifacts": Array(injectedLibraries.prefix(8))])
+      add("instrumentation", ["artifacts": Array(injectedLibraries.prefix(8))])
     }
 
     var process = kinfo_proc()
@@ -82,24 +81,24 @@ public class MobileHardeningKitPlugin: NSObject, FlutterPlugin, FlutterStreamHan
     var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
     let result = sysctl(&mib, u_int(mib.count), &process, &size, nil, 0)
     if result == 0 && (process.kp_proc.p_flag & P_TRACED) != 0 {
-      add("debuggerAttach", "high", ["traced": true])
+      add("debuggerAttach", ["traced": true])
     }
 
     #if targetEnvironment(simulator)
-      add("emulator", "high", ["environment": "simulator"])
+      add("emulator", ["environment": "simulator"])
     #endif
 
     if UIScreen.main.isCaptured {
-      add("screenCaptureActive", "high", ["captured": true])
+      add("screenCaptureActive", ["captured": true])
     }
     if UIScreen.screens.count > 1 {
-      add("externalDisplay", "medium", ["displayCount": UIScreen.screens.count - 1])
+      add("externalDisplay", ["displayCount": UIScreen.screens.count - 1])
     }
 
     // iOS does not expose its app-signing certificate fingerprint to sandboxed
     // applications. Report only if the signed main executable lacks a code signature.
     if !mainExecutableHasCodeSignature() {
-      add("signatureMismatch", "high", ["codeSignaturePresent": false])
+      add("signatureMismatch", ["codeSignaturePresent": false])
     }
     return signals
   }
@@ -138,13 +137,13 @@ public class MobileHardeningKitPlugin: NSObject, FlutterPlugin, FlutterStreamHan
       center.addObserver(forName: UIScreen.capturedDidChangeNotification, object: nil, queue: .main)
       { [weak self] _ in
         guard let self else { return }
-        self.emit("screenCaptureActive", UIScreen.main.isCaptured, "high")
+        self.emit("screenCaptureActive", UIScreen.main.isCaptured)
       })
     streamObservers.append(
       center.addObserver(
         forName: UIApplication.userDidTakeScreenshotNotification, object: nil, queue: .main
       ) { [weak self] _ in
-        self?.emit("screenshotTaken", true, "high")
+        self?.emit("screenshotTaken", true)
       })
     streamObservers.append(
       center.addObserver(forName: UIScreen.didConnectNotification, object: nil, queue: .main) {
@@ -189,9 +188,9 @@ public class MobileHardeningKitPlugin: NSObject, FlutterPlugin, FlutterStreamHan
     removeObscuringView()
   }
 
-  private func emit(_ type: String, _ active: Bool, _ confidence: String) {
+  private func emit(_ type: String, _ active: Bool) {
     eventSink?([
-      "type": type, "confidence": confidence,
+      "type": type,
       "observedAt": ISO8601DateFormatter().string(from: Date()),
       "metadata": ["active": active],
     ])
@@ -200,7 +199,7 @@ public class MobileHardeningKitPlugin: NSObject, FlutterPlugin, FlutterStreamHan
   private func emitExternalDisplay() {
     let count = UIScreen.screens.count - 1
     eventSink?([
-      "type": "externalDisplay", "confidence": count > 0 ? "medium" : "low",
+      "type": "externalDisplay",
       "observedAt": ISO8601DateFormatter().string(from: Date()),
       "metadata": ["connected": count > 0, "displayCount": max(0, count)],
     ])

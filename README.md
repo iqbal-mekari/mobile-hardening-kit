@@ -27,15 +27,15 @@ import 'package:mobile_hardening_kit/mobile_hardening_kit.dart';
 final hardening = MobileHardeningKit(
   // Optional. SHA-256 hex fingerprint of the expected Android signing cert.
   expectedSigningCertificateSha256: '0123...abcd',
-  // Android enabled accessibility services not listed here are reported as
-  // low-confidence ACCESSIBILITY_UNRECOGNIZED findings.
+  // Android enabled accessibility services not listed here produce
+  // ACCESSIBILITY_UNRECOGNIZED observations for the consuming app to handle.
   trustedAccessibilityPackages: const {'com.example.approvedaccessibility'},
 );
 
 final findings = await hardening.snapshot();
 for (final finding in findings) {
   // Forward to app-owned risk handling; don't assume a clean scan is proof.
-  print('${finding.type}: ${finding.confidence} ${finding.metadata}');
+  print('${finding.type.name}: ${finding.observedAt.toIso8601String()} ${finding.metadata}');
 }
 
 final subscription = hardening.stream.listen((finding) {
@@ -58,7 +58,7 @@ Set `expectedSigningCertificateSha256` to the signing certificate's SHA-256 dige
 | Debugger | Runtime debugger attachment | `sysctl` traced-process flag |
 | Signature integrity | SHA-256 of installed signing certificate compared with caller-supplied fingerprint | Detects absence of Mach-O code-signature command only; cannot expose/compare signing certificate fingerprint |
 | Emulator / simulator | Multiple build-property heuristics | Simulator build environment |
-| Accessibility / developer settings | Reports enabled external accessibility packages not caller-trusted, developer options, or ADB; low confidence | Not exposed by the platform APIs used here |
+| Accessibility / developer settings | Reports enabled external accessibility packages not caller-trusted, developer options, or ADB | Not exposed by the platform APIs used here |
 | Capture / display | Android 14+ screenshot callback while the signal stream is listened to; secondary presentation displays (virtual displays included) | Screen recording/mirroring state, screenshot event, and external display connection events |
 | Protection helper | `FLAG_SECURE` on attached Flutter window | Blurred app-switcher snapshot while app is backgrounded; does not prevent screenshots or screen recording |
 
@@ -85,6 +85,55 @@ Android applies `FLAG_SECURE` to the attached Flutter activity window (so it aff
 
 ## Testing signal triggers
 
+### Prepare instrumentation test tools
+
+These tools are optional, external test-lab utilities; they do not become package dependencies. Use only disposable, authorized test devices. Rooting, injecting modules, or loading instrumentation can crash or compromise a device.
+
+#### Frida host tools
+
+Install the Frida CLI in an isolated host Python environment and check its version:
+
+```sh
+python3 -m venv ~/.venvs/mobile-hardening-frida
+source ~/.venvs/mobile-hardening-frida/bin/activate
+python -m pip install --upgrade frida-tools
+frida --version
+```
+
+Use the same Frida version for the host tools and device-side server/Gadget. See the [official Frida Android](https://frida.re/docs/android/), [iOS](https://frida.re/docs/ios/), and [release](https://github.com/frida/frida/releases) instructions.
+
+#### Android: Frida server and Xposed-compatible frameworks
+
+Use a disposable rooted emulator/device. Check its ABI with `adb shell getprop ro.product.cpu.abilist`; download the matching `frida-server` asset for that ABI and the same version shown by `frida --version`, extract it, and name it `frida-server`.
+
+```sh
+adb root # only on emulator images that support root adb
+adb push frida-server /data/local/tmp/frida-server
+adb shell "chmod 755 /data/local/tmp/frida-server"
+adb shell "/data/local/tmp/frida-server >/dev/null 2>&1 &"
+frida-ps -U
+```
+
+If `adb root` is unavailable on a rooted production build, start the server through `su`:
+
+```sh
+adb shell "su -c '/data/local/tmp/frida-server >/dev/null 2>&1 &'"
+```
+
+Keep it running while the example is open and tap **Scan now**; this detector checks for Frida mappings and listeners on ports 27042/27043.
+
+`adb root` alone may not trigger the `root` signal; that detector needs a recognized root artifact or build tag, as noted in the Android trigger table below.
+
+For Xposed/LSPosed, use a disposable image rooted with [Magisk](https://topjohnwu.github.io/Magisk/install.html) and follow the [LSPosed installation guide](https://github.com/LSPosed/LSPosed/wiki/How-to-use-it). Enable a compatible module and scope it only to the example package `com.mekari.mobile_hardening_kit_example`; force-stop and relaunch the example before scanning. The detector searches the app process mappings for `xposed`/`lsposed`, so installing the framework alone may not produce a finding if no matching mapping is exposed. Xposed-compatible frameworks apply to Android, not iOS.
+
+#### iOS: Frida
+
+On a jailbroken test device, install Frida using its [official iOS instructions](https://frida.re/docs/ios/) and confirm the host can see the device with `frida-ps -U`. On a non-jailbroken device, use a development-signed debuggable build; Frida's official workflow injects Gadget into debuggable apps and Xcode mounts the Developer Disk Image. Use `frida-ps -U` to find the sample process, then attach with `frida -U -n Runner`. Keep Gadget's loaded image name recognizable (for example, `FridaGadget`) because this detector checks loaded library names. Tap **Scan now**, then detach when finished. There is no Xposed setup for iOS.
+
+Stop Frida and disable/uninstall test modules after testing. Root/jailbreak and instrumentation findings remain heuristic: a tool may be installed yet not expose a name or path this kit recognizes.
+
+### Launch the example
+
 From the repository root, start the example on a device or simulator:
 
 ```sh
@@ -100,12 +149,24 @@ The example takes a snapshot on launch and subscribes to the event stream. After
 
 Use an API 34+ emulator or device for screenshot-event testing.
 
+On the Android 17/API 37 emulator, **Scan now** reported `emulator` (`indicatorCount: 2`) and `devModeEnabled` (`usbDebugging: true`).
+
+![Android 17 emulator showing emulator and devModeEnabled findings](docs/images/android-emulator-detection.jpg)
+
+On the rooted POCO F1 (Android 12/API 32), **Scan now** reported `root` with `managerPackage: "com.topjohnwu.magisk"` and, while Frida 17.18.0 was attached, `instrumentation` with `/memfd:frida-agent-64.so`. The screenshot below shows those findings alongside `accessibilityUnrecognized` and `devModeEnabled`.
+
+![POCO F1 detecting root and Frida instrumentation](docs/images/poco-frida-instrumentation.jpg)
+
+LSPosed was active on the device, but its manager had no modules enabled or scoped for this app; this run did not produce an Xposed/LSPosed injection finding.
+
+On Android 12, SELinux denied the sample's `/proc/net/tcp` read, so `tracerPort` remained `0`; the Frida mapping was detected independently.
+
 | Signal | Trigger |
 | --- | --- |
 | `emulator` | Run on an Android emulator and tap **Scan now**. Emulator heuristics vary by system image. |
 | `devModeEnabled` | Enable **Developer options** or **USB debugging** in Android Settings, return to the app, and scan. |
 | `debuggerAttach` | Attach an Android Studio **native** debugger to the running app process, then scan. The Dart/Flutter debugger alone may not attach a Java debugger. |
-| `accessibilityUnrecognized` | Enable an accessibility service such as TalkBack, then scan. The example supplies no trusted-package allowlist, so enabled external services are reported with low confidence. Turn the service off afterward. |
+| `accessibilityUnrecognized` | Enable an accessibility service such as TalkBack, then scan. The example supplies no trusted-package allowlist, so enabled external services are included in the signal metadata. Turn the service off afterward. |
 | `screenshotTaken` | On Android 14/API 34 or later, take a device screenshot while the example is foregrounded. The signal is delivered by the event stream, not by a later snapshot. |
 | `externalDisplay` | Connect or cast to a secondary display that Android exposes as a presentation display. Emulator virtual presentation displays can also produce this finding. |
 | `signatureMismatch` | For a local-only test, pass a deliberately incorrect 64-character SHA-256 value to `MobileHardeningKit(expectedSigningCertificateSha256: ...)` in `example/lib/main.dart`, rebuild, and scan. Remove the test value afterward; do not commit it. |
@@ -143,6 +204,12 @@ The iOS `signatureMismatch` check only reports a missing Mach-O code-signature c
 ### Test the separate screen-protection helper
 
 The **Protect sensitive display content** switch is independent of signal detection. On Android it enables `FLAG_SECURE` for the app window, preventing screenshots while enabled. On iOS it blurs the app-switcher snapshot; it does not block screenshots or recording. Turn protection off before testing screenshot signals.
+
+With protection enabled and the app switcher open, the POCO F1 (Android 12/API 32) showed a blank app preview, while the iPhone 17 Pro Simulator (iOS 26.4) showed an obscured snapshot:
+
+| POCO F1 | iPhone 17 Pro Simulator |
+| --- | --- |
+| ![POCO F1 overview with the protected app preview blank](docs/images/poco-android-secure-display.jpg) | ![iOS app switcher with the protected app snapshot obscured](docs/images/ios-secure-display-simulator.png) |
 
 ## Development
 

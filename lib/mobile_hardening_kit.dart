@@ -25,11 +25,12 @@ class MobileHardeningKit {
   final String? expectedSigningCertificateSha256;
 
   /// Android package IDs considered known-good accessibility services.
-  /// Other enabled services are reported with low confidence.
+  /// Other enabled services may produce `accessibilityUnrecognized` signals.
   final Set<String> trustedAccessibilityPackages;
 
-  /// Returns all currently detected findings. Unsupported checks are omitted.
-  Future<Set<HardeningSignal>> snapshot() async {
+  /// Returns observations in native detection order, at most one per type.
+  /// Unsupported checks are omitted.
+  Future<List<HardeningSignal>> snapshot() async {
     final values =
         await _methods.invokeListMethod<Object?>('snapshot', <String, Object?>{
       if (expectedSigningCertificateSha256 != null)
@@ -40,7 +41,7 @@ class MobileHardeningKit {
     return (values ?? const <Object?>[])
         .whereType<Map<Object?, Object?>>()
         .map(HardeningSignal.fromMap)
-        .toSet();
+        .toList(growable: false);
   }
 
   /// Emits native display/capture observations as their state changes.

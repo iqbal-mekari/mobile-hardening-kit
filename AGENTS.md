@@ -7,7 +7,7 @@
 ## Architecture & Data Flow
 
 - `lib/mobile_hardening_kit.dart` is the public API. It sends point-in-time requests and protection toggles over the `mobile_hardening_kit` `MethodChannel`, and exposes native state changes from `mobile_hardening_kit/events` as a broadcast stream.
-- `lib/src/hardening_signal.dart` defines the shared signal and confidence types and decodes native maps. Keep signal enum names and map fields (`type`, `confidence`, `observedAt`, `metadata`) aligned across Dart, Kotlin, and Swift.
+- `lib/src/hardening_signal.dart` defines shared signal types and observation records. Keep map fields (`type`, `observedAt`, `metadata`) aligned across Dart, Kotlin, and Swift; snapshots contain at most one record per signal type, while event streams can repeat types for state transitions.
 - Android's `ActivityAware` plugin performs platform checks and manages activity/window and display lifecycles. iOS registers a Flutter plugin and uses UIKit notifications for capture, display, and app-state observations. Platform-specific checks belong in their native implementations; do not duplicate them in Dart.
 - `example/lib/main.dart` shows the consumer flow: snapshot, subscribe/cancel, and opt-in protection. There is no state-management or dependency-injection framework.
 - Checks are best-effort: unsupported checks are omitted, unknown signal types fail decoding with `FormatException`, and findings must not be interpreted as proof of device integrity. iOS cannot expose a signing certificate fingerprint or prevent screenshots; Android presentation-display findings can include virtual displays.

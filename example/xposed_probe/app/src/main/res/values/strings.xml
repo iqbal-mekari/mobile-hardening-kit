@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Mobile Hardening Xposed Probe</string>
+    <string name="module_description">No-hook Xposed API probe scoped to the Mobile Hardening example.</string>
+</resources>
