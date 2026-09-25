@@ -1,0 +1,28 @@
+name: mobile_hardening_kit
+description: Client-side mobile integrity and display signals for Flutter apps.
+version: 0.1.0
+homepage: https://github.com/iqbal-mekari/mobile-hardening-kit
+repository: https://github.com/iqbal-mekari/mobile-hardening-kit
+issue_tracker: https://github.com/iqbal-mekari/mobile-hardening-kit/issues
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.24.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.mekari.mobile_hardening_kit
+        pluginClass: MobileHardeningKitPlugin
+      ios:
+        pluginClass: MobileHardeningKitPlugin

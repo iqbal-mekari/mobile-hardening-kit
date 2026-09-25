@@ -1,0 +1,54 @@
+name: Tagged Android release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Flutter 3.24.0 from the official repository
+        run: |
+          git clone --depth 1 --branch 3.24.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Require a changelog entry for this tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 -c 'import pathlib, sys; tag = sys.argv[1].removeprefix("v"); changelog = pathlib.Path("CHANGELOG.md").read_text(); expected = f"## [{tag}]"; sys.exit(0 if expected in changelog else f"Missing {expected} entry in CHANGELOG.md")' "$RELEASE_TAG"
+      - name: Resolve package dependencies
+        run: flutter pub get
+      - name: Resolve example dependencies
+        working-directory: example
+        run: flutter pub get
+      - name: Analyze Dart
+        run: flutter analyze --fatal-infos
+      - name: Analyze example Dart
+        working-directory: example
+        run: flutter analyze --fatal-infos
+      - name: Test package
+        run: flutter test
+      - name: Test example app
+        working-directory: example
+        run: flutter test
+      - name: Build release example APK
+        working-directory: example
+        run: flutter build apk --release
+      - name: Upload APK workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-hardening-kit-${{ github.ref_name }}-android-apk
+          path: example/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish GitHub Release with changelog and APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes-file CHANGELOG.md example/build/app/outputs/flutter-apk/app-release.apk

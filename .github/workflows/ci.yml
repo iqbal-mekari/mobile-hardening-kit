@@ -1,0 +1,36 @@
+name: Flutter CI
+
+on:
+  pull_request:
+    branches: ['**']
+
+permissions:
+  contents: read
+
+jobs:
+  flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Flutter 3.24.0 from the official repository
+        run: |
+          git clone --depth 1 --branch 3.24.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Resolve package dependencies
+        run: flutter pub get
+      - name: Resolve example dependencies
+        working-directory: example
+        run: flutter pub get
+      - name: Analyze Dart
+        run: flutter analyze --fatal-infos
+      - name: Analyze example Dart
+        working-directory: example
+        run: flutter analyze --fatal-infos
+      - name: Test package
+        run: flutter test
+      - name: Test example app
+        working-directory: example
+        run: flutter test
+      - name: Build Android example
+        working-directory: example
+        run: flutter build apk --debug
