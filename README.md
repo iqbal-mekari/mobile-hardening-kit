@@ -161,6 +161,8 @@ LSPosed was active on the device, but its manager had no modules enabled or scop
 
 On Android 12, SELinux denied the sample's `/proc/net/tcp` read, so `tracerPort` remained `0`; the Frida mapping was detected independently.
 
+### Capabilities
+
 | Signal | Trigger |
 | --- | --- |
 | `emulator` | Run on an Android emulator and tap **Scan now**. Emulator heuristics vary by system image. |
@@ -190,6 +192,8 @@ Android does not expose a general screen-recording-active signal to ordinary app
 ### iOS
 
 Run the example in the iOS Simulator or on a test device. The simulator reports `emulator` (the signal type is shared across platforms).
+
+### Capabilities
 
 | Signal | Trigger |
 | --- | --- |
