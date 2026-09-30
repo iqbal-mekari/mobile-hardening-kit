@@ -7,7 +7,9 @@ Pod::Spec.new do |s|
   s.license          = { :file => '../LICENSE' }
   s.author           = 'Mobile Hardening Kit contributors'
   s.source           = { :git => 'git@github.com:iqbal-mekari/mobile-hardening-kit.git', :tag => s.version.to_s }
-  s.source_files = 'Classes/**/*'
+  # Classes/Core is the native core, also exposed as the SwiftPM package (root Package.swift).
+  s.source_files = 'Classes/**/*.swift'
+  s.resource_bundles = { 'mobile_hardening_kit_privacy' => ['Classes/Core/PrivacyInfo.xcprivacy'] }
   s.dependency 'Flutter'
   s.platform = :ios, '13.0'
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
