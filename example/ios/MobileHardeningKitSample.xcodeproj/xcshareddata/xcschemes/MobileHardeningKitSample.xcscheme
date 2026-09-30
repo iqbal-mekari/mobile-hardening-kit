@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "CE224B44231BEB81C3EE3C4B"
+               BlueprintIdentifier = "70B9EA0DE1BBB749826A75DB"
                BuildableName = "MobileHardeningKitSample.app"
                BlueprintName = "MobileHardeningKitSample"
                ReferencedContainer = "container:MobileHardeningKitSample.xcodeproj">
@@ -30,7 +30,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "CE224B44231BEB81C3EE3C4B"
+            BlueprintIdentifier = "70B9EA0DE1BBB749826A75DB"
             BuildableName = "MobileHardeningKitSample.app"
             BlueprintName = "MobileHardeningKitSample"
             ReferencedContainer = "container:MobileHardeningKitSample.xcodeproj">
@@ -53,7 +53,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "CE224B44231BEB81C3EE3C4B"
+            BlueprintIdentifier = "70B9EA0DE1BBB749826A75DB"
             BuildableName = "MobileHardeningKitSample.app"
             BlueprintName = "MobileHardeningKitSample"
             ReferencedContainer = "container:MobileHardeningKitSample.xcodeproj">
@@ -70,7 +70,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "CE224B44231BEB81C3EE3C4B"
+            BlueprintIdentifier = "70B9EA0DE1BBB749826A75DB"
             BuildableName = "MobileHardeningKitSample.app"
             BlueprintName = "MobileHardeningKitSample"
             ReferencedContainer = "container:MobileHardeningKitSample.xcodeproj">

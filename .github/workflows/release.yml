@@ -25,30 +25,30 @@ jobs:
       - name: Resolve package dependencies
         run: flutter pub get
       - name: Resolve example dependencies
-        working-directory: example
+        working-directory: example/flutter
         run: flutter pub get
       - name: Analyze Dart
         run: flutter analyze --fatal-infos
       - name: Analyze example Dart
-        working-directory: example
+        working-directory: example/flutter
         run: flutter analyze --fatal-infos
       - name: Test package
         run: flutter test
       - name: Test example app
-        working-directory: example
+        working-directory: example/flutter
         run: flutter test
       - name: Build release example APK
-        working-directory: example
+        working-directory: example/flutter
         run: flutter build apk --release
       - name: Upload APK workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: mobile-hardening-kit-${{ github.ref_name }}-android-apk
-          path: example/build/app/outputs/flutter-apk/app-release.apk
+          path: example/flutter/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 90
       - name: Publish GitHub Release with changelog and APK
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes-file CHANGELOG.md example/build/app/outputs/flutter-apk/app-release.apk
+        run: gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes-file CHANGELOG.md example/flutter/build/app/outputs/flutter-apk/app-release.apk

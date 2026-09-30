@@ -1,14 +1,9 @@
-plugins {
-    id "com.android.application"
-    id "kotlin-android"
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
-    id "dev.flutter.flutter-gradle-plugin"
-}
+apply plugin: "com.android.application"
+apply plugin: "kotlin-android"
 
 android {
-    namespace = "com.mekari.mobile_hardening_kit_example"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    namespace = "com.mekari.mobile_hardening_kit.sample"
+    compileSdk = 34
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
@@ -20,20 +15,16 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.mekari.mobile_hardening_kit_example"
+        applicationId = "com.mekari.mobile_hardening_kit.sample"
         minSdk = 23
-        targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
-    }
-
-    buildTypes {
-        release {
-            signingConfig = signingConfigs.debug
-        }
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
     }
 }
 
-flutter {
-    source = "../.."
+dependencies {
+    // In an app outside this repo, use the Maven coordinates from the README instead:
+    // implementation "com.mekari.mobile_hardening_kit:mobile-hardening-kit:0.1.0"
+    implementation project(":core")
 }
