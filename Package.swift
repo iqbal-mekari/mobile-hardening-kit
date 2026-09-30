@@ -13,6 +13,11 @@ let package = Package(
       name: "MobileHardeningKit",
       path: "ios/Classes/Core",
       resources: [.copy("PrivacyInfo.xcprivacy")]
-    )
+    ),
+    .testTarget(
+      name: "MobileHardeningKitTests",
+      dependencies: ["MobileHardeningKit"],
+      path: "ios/Tests/MobileHardeningKitTests"
+    ),
   ]
 )
