@@ -1,6 +1,6 @@
 name: mobile_hardening_kit
 description: Client-side mobile integrity and display signals for Flutter apps.
-version: 0.1.0
+version: 0.2.0
 homepage: https://github.com/iqbal-mekari/mobile-hardening-kit
 repository: https://github.com/iqbal-mekari/mobile-hardening-kit
 issue_tracker: https://github.com/iqbal-mekari/mobile-hardening-kit/issues

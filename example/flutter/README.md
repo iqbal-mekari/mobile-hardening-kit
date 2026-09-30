@@ -22,8 +22,8 @@ samples, guidance on mobile development, and a full API reference.
 From the repository root, build and install it:
 
 ```sh
-./example/android/gradlew -p example/xposed_probe :app:assembleDebug
-adb -s DEVICE_ID install -r example/xposed_probe/app/build/outputs/apk/debug/app-debug.apk
+./example/flutter/android/gradlew -p example/flutter/xposed_probe :app:assembleDebug
+adb -s DEVICE_ID install -r example/flutter/xposed_probe/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 In LSPosed Manager, enable **Mobile Hardening Xposed Probe** and confirm the Flutter example is its only selected scope. Force-stop and relaunch the example, then tap **Scan now**. To confirm the module loaded:

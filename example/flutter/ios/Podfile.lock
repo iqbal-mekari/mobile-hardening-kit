@@ -1,6 +1,6 @@
 PODS:
   - Flutter (1.0.0)
-  - mobile_hardening_kit (0.1.0):
+  - mobile_hardening_kit (0.2.0):
     - Flutter
 
 DEPENDENCIES:
@@ -15,7 +15,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   Flutter: e0871f40cf51350855a761d2e70bf5af5b9b5de7
-  mobile_hardening_kit: f7ae2cc68e2a45138e56401e4521f6969452ba83
+  mobile_hardening_kit: 2441297571723acc838532d4768140864a845b65
 
 PODFILE CHECKSUM: 819463e6a0290f5a72f145ba7cde16e8b6ef0796
 

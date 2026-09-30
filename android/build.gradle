@@ -23,6 +23,7 @@ allprojects {
 
 apply plugin: "com.android.library"
 apply plugin: "kotlin-android"
+apply plugin: "jacoco"
 
 android {
     if (project.android.hasProperty("namespace")) {
@@ -38,13 +39,87 @@ android {
 
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_1_8
+        allWarningsAsErrors = true
+    }
+
+    buildTypes {
+        debug {
+            enableUnitTestCoverage = true
+        }
+    }
+
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            all {
+                jacoco {
+                    includeNoLocationClasses = true
+                    excludes = ["jdk.internal.*"]
+                }
+            }
+        }
+    }
+
+    lint {
+        warningsAsErrors = true
+        abortOnError = true
     }
 
     sourceSets {
         main.java.srcDirs += "src/main/kotlin"
+        // Native core shared with the standalone native/android library.
+        main.java.srcDirs += "../native/android/core/src/main/kotlin"
     }
 
     defaultConfig {
         minSdk = 23
+    }
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.robolectric:robolectric:4.11.1"
+    testImplementation "org.mockito:mockito-core:5.11.0"
+}
+
+// Adapter-only coverage gate (the shared native core is gated in native/android).
+// Run from example/flutter/android: ./gradlew :mobile_hardening_kit:testDebugUnitTest :mobile_hardening_kit:coverageVerification
+def coverageExec = file("$buildDir/outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec")
+def adapterClasses = fileTree(dir: "$buildDir/tmp/kotlin-classes/debug", includes: ["**/MobileHardeningKitPlugin*.class"])
+def requireCoverageData = { ->
+    if (!coverageExec.exists()) throw new GradleException("No coverage data at $coverageExec")
+}
+
+tasks.register("coverageReport", JacocoReport) {
+    dependsOn "testDebugUnitTest"
+    doFirst(requireCoverageData)
+    classDirectories.setFrom(adapterClasses)
+    sourceDirectories.setFrom(files("src/main/kotlin"))
+    executionData.setFrom(files(coverageExec))
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks.register("coverageVerification", JacocoCoverageVerification) {
+    dependsOn "testDebugUnitTest"
+    doFirst(requireCoverageData)
+    classDirectories.setFrom(adapterClasses)
+    executionData.setFrom(files(coverageExec))
+    violationRules {
+        rule {
+            limit {
+                counter = "LINE"
+                minimum = 0.95
+            }
+        }
+        rule {
+            limit {
+                counter = "BRANCH"
+                // Remaining branches are Kotlin-generated null-check intrinsics on framework parameters.
+                minimum = 0.60
+            }
+        }
     }
 }

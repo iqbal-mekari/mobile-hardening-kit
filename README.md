@@ -1,6 +1,6 @@
 # Mobile Hardening Kit
 
-A dependency-light Flutter plugin that collects heuristic client-side integrity and display signals through in-house Dart, Kotlin, and Swift implementations. **The kit reports signals; it never blocks a user flow or makes a product risk decision.** Client-side checks are bypassable and are not a security boundary.
+A dependency-light library that collects heuristic client-side integrity and display signals through in-house Kotlin and Swift cores. It can be used directly from native Android and iOS apps, or through the Flutter plugin, which is a thin wrapper over the same native cores. **The kit reports signals; it never blocks a user flow or makes a product risk decision.** Client-side checks are bypassable and are not a security boundary.
 
 ## Requirements
 
@@ -16,8 +16,89 @@ dependencies:
   mobile_hardening_kit:
     git:
       url: git@github.com:iqbal-mekari/mobile-hardening-kit.git
-      ref: v0.1.0
+      ref: 0.2.0
 ```
+
+## Native integration (no Flutter)
+
+The detection logic lives in two Flutter-free cores; the Flutter plugin only adapts them to method/event channels.
+
+| Platform | Core | Flutter adapter |
+| --- | --- | --- |
+| Android | `native/android/core` (`MobileHardeningKit.kt`, `HardeningSignal.kt`) | `android/.../MobileHardeningKitPlugin.kt` |
+| iOS | `ios/Classes/Core` (`MobileHardeningKit.swift`, `HardeningSignal.swift`) | `ios/Classes/MobileHardeningKitPlugin.swift` |
+
+### Android (Kotlin/Java, min SDK 23)
+
+Each tagged release publishes the AAR to this repository's GitHub Packages (Maven) and attaches the AAR, POM, and Gradle metadata to the GitHub Release. GitHub Packages requires a token even for public packages: use a personal access token with `read:packages`, supplied as Gradle properties or environment variables (never commit it).
+
+```gradle
+repositories {
+  maven {
+    url = uri("https://maven.pkg.github.com/iqbal-mekari/mobile-hardening-kit")
+    credentials {
+      username = providers.gradleProperty("gpr.user").orNull ?: System.getenv("GITHUB_ACTOR")
+      password = providers.gradleProperty("gpr.key").orNull ?: System.getenv("GITHUB_TOKEN")
+    }
+  }
+}
+dependencies { implementation "com.mekari.mobile_hardening_kit:mobile-hardening-kit:0.2.0" }
+```
+
+To build locally instead: `cd native/android && ./gradlew :core:publishReleasePublicationToMavenLocal`, then use `mavenLocal()`.
+
+```kotlin
+val kit = MobileHardeningKit(applicationContext)
+val signals = kit.snapshot(
+  HardeningConfig(
+    expectedSigningCertificateSha256 = "0123...abcd", // optional
+    trustedAccessibilityPackages = setOf("com.example.approvedaccessibility"),
+  )
+)
+
+// Optional: events and opt-in FLAG_SECURE need the host activity.
+kit.attachActivity(activity)          // onCreate/onStart; pair with detachActivity() in onDestroy
+kit.startObserving { signal -> /* HardeningSignal */ }
+kit.setScreenProtectionEnabled(true)  // sensitive flow only
+// ...
+kit.stopObserving()
+kit.detachActivity()
+```
+
+Call all methods from the main thread. `detachActivity()` restores the window's original `FLAG_SECURE` state. The library manifest declares `DETECT_SCREEN_CAPTURE` (normal permission, needed for Android 14+ screenshot events) and the Magisk `<queries>` entry; both merge into your app.
+
+### iOS (Swift, iOS 13+)
+
+Swift Package Manager (root `Package.swift`, product `MobileHardeningKit`):
+
+```swift
+.package(url: "https://github.com/iqbal-mekari/mobile-hardening-kit", from: "0.2.0")
+```
+
+```swift
+import MobileHardeningKit
+
+let kit = MobileHardeningKit()
+let signals = kit.snapshot()                 // [HardeningSignal]
+kit.startObserving { signal in /* capture, screenshot, external display changes */ }
+kit.setScreenProtectionEnabled(true)         // sensitive flow only; blurs the app-switcher snapshot
+// ...
+kit.stopObserving()
+```
+
+iOS has no signer-certificate config: it cannot read its signing fingerprint. To use the `jailbreak` URL-scheme check, add `cydia` and `sileo` to the host app's `LSApplicationQueriesSchemes`. Call from the main thread.
+
+### Signal schema
+
+Both cores emit `HardeningSignal(type, observedAt, metadata)`; `toMap()` (Kotlin) / `dictionary` (Swift) yield the map the Flutter channel and Dart decoder use. Type names are identical across Kotlin, Swift, and Dart (`HardeningSignalType`).
+
+### Native samples
+
+- **Android** — `example/android` (framework-only UI, depends on `:core` by project path): `cd example/android && ./gradlew :app:installDebug`, then launch "Hardening Kit Sample".
+- **iOS** — `example/ios/MobileHardeningKitSample.xcodeproj` (SwiftUI, iOS 14+; consumes the root Swift package by local path through SPM): open it in Xcode and run on a simulator or device, or `xcodebuild -project example/ios/MobileHardeningKitSample.xcodeproj -scheme MobileHardeningKitSample -destination 'platform=iOS Simulator,name=iPhone 17' build`.
+- **Flutter** — `example/flutter` (see below).
+
+Both show a snapshot, live events, and the opt-in protection toggle. On the iOS simulator the `jailbreak` finding comes from host-shared paths such as `/usr/bin/ssh`; this is an expected heuristic false positive.
 
 ## Collect signals
 
@@ -81,7 +162,7 @@ Android applies `FLAG_SECURE` to the attached Flutter activity window (so it aff
 
 ## Example
 
-`example/` is a Flutter app that runs a scan, displays current findings, subscribes to display/capture events, and toggles the opt-in protection helper. Run it on an Android or iOS device/simulator with `cd example && flutter run`.
+`example/` holds one sample per integration style: `example/flutter` (Flutter app), `example/android` (native Android), and `example/ios` (native iOS, SPM). The Flutter app runs a scan, displays current findings, subscribes to display/capture events, and toggles the opt-in protection helper. Run it on an Android or iOS device/simulator with `cd example/flutter && flutter run`.
 
 ## Testing signal triggers
 
@@ -137,7 +218,7 @@ Stop Frida and disable/uninstall test modules after testing. Root/jailbreak and 
 From the repository root, start the example on a device or simulator:
 
 ```sh
-cd example
+cd example/flutter
 flutter pub get
 flutter devices
 flutter run -d DEVICE_ID
@@ -171,7 +252,7 @@ On Android 12, SELinux denied the sample's `/proc/net/tcp` read, so `tracerPort`
 | `accessibilityUnrecognized` | Enable an accessibility service such as TalkBack, then scan. The example supplies no trusted-package allowlist, so enabled external services are included in the signal metadata. Turn the service off afterward. |
 | `screenshotTaken` | On Android 14/API 34 or later, take a device screenshot while the example is foregrounded. The signal is delivered by the event stream, not by a later snapshot. |
 | `externalDisplay` | Connect or cast to a secondary display that Android exposes as a presentation display. Emulator virtual presentation displays can also produce this finding. |
-| `signatureMismatch` | For a local-only test, pass a deliberately incorrect 64-character SHA-256 value to `MobileHardeningKit(expectedSigningCertificateSha256: ...)` in `example/lib/main.dart`, rebuild, and scan. Remove the test value afterward; do not commit it. |
+| `signatureMismatch` | For a local-only test, pass a deliberately incorrect 64-character SHA-256 value to `MobileHardeningKit(expectedSigningCertificateSha256: ...)` in `example/flutter/lib/main.dart`, rebuild, and scan. Remove the test value afterward; do not commit it. |
 | `root`, `instrumentation` | These require a test environment with a recognized root artifact/build tag or instrumentation library/listener. There is no reliable standard-emulator toggle; use only an isolated, authorized test device. |
 
 To trigger `signatureMismatch`, temporarily replace the example's `_kit` initializer with this deliberately incorrect test fingerprint, then rebuild and scan:
@@ -221,7 +302,7 @@ With protection enabled and the app switcher open, the POCO F1 (Android 12/API 3
 flutter pub get
 flutter analyze
 flutter test
-cd example && flutter pub get && flutter build apk --debug
+cd example/flutter && flutter pub get && flutter build apk --debug
 ```
 
 GitHub Actions analyzes and tests the package and example and builds the Android example for pull requests. Pushing a `v*` tag runs the same checks, builds a release APK, uploads it as a workflow artifact and GitHub Release asset, and uses `CHANGELOG.md` as the release notes. Update the changelog before every release tag.

@@ -1,54 +1,118 @@
-name: Tagged Android release
+name: Release
 
+# Tags are bare semantic versions (for example 0.2.0), matching SwiftPM and pub git refs.
+# The tag must equal the version in pubspec.yaml, the podspec, and the Android core default,
+# and CHANGELOG.md must contain a matching "## [X.Y.Z]" heading.
+# iOS and Flutter consumers use the tagged sources; Android consumers use the AAR published here.
 on:
   push:
     tags:
-      - '0.1.0'
+      - '[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   contents: write
+  packages: write
+
+env:
+  FLUTTER_VERSION: 3.24.0
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Flutter 3.24.0 from the official repository
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Flutter ${{ env.FLUTTER_VERSION }} from the official repository
         run: |
-          git clone --depth 1 --branch 3.24.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
-      - name: Require a changelog entry for this tag
+
+      - name: Verify tag, versions, and changelog; extract release notes
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          python3 -c 'import pathlib, sys; tag = sys.argv[1].removeprefix("v"); changelog = pathlib.Path("CHANGELOG.md").read_text(); expected = f"## [{tag}]"; sys.exit(0 if expected in changelog else f"Missing {expected} entry in CHANGELOG.md")' "$RELEASE_TAG"
-      - name: Resolve package dependencies
-        run: flutter pub get
-      - name: Resolve example dependencies
-        working-directory: example
-        run: flutter pub get
+          python3 - <<'EOF'
+          import os, pathlib, re, sys
+          tag = os.environ["RELEASE_TAG"]
+          checks = {
+              "pubspec.yaml": (r"(?m)^version: (\S+)$", "pubspec.yaml"),
+              "ios/mobile_hardening_kit.podspec": (r"s\.version\s*=\s*'([^']+)'", "podspec"),
+              "native/android/core/build.gradle": (r'findProperty\("libraryVersion"\) \?: "([^"]+)"', "Android core default version"),
+          }
+          errors = []
+          for path, (pattern, label) in checks.items():
+              match = re.search(pattern, pathlib.Path(path).read_text())
+              found = match.group(1) if match else None
+              if found != tag:
+                  errors.append(f"{label} is {found}, expected {tag}")
+          changelog = pathlib.Path("CHANGELOG.md").read_text()
+          section = re.search(rf"(?ms)^## \[{re.escape(tag)}\][^\n]*\n(.*?)(?=^## \[|\Z)", changelog)
+          if not section or not section.group(1).strip():
+              errors.append(f"CHANGELOG.md has no non-empty '## [{tag}]' section")
+          if errors:
+              sys.exit("\n".join(errors))
+          pathlib.Path(os.environ["RUNNER_TEMP"], "release-notes.md").write_text(section.group(1).strip() + "\n")
+          EOF
+
+      - name: Resolve dependencies
+        run: |
+          flutter pub get
+          (cd example/flutter && flutter pub get)
       - name: Analyze Dart
         run: flutter analyze --fatal-infos
-      - name: Analyze example Dart
-        working-directory: example
+      - name: Analyze Flutter example
+        working-directory: example/flutter
         run: flutter analyze --fatal-infos
-      - name: Test package
+      - name: Test package with coverage
+        run: |
+          flutter test --coverage
+          python3 tool/check_lcov.py coverage/lcov.info 95
+      - name: Test Flutter example
+        working-directory: example/flutter
         run: flutter test
-      - name: Test example app
-        working-directory: example
-        run: flutter test
-      - name: Build release example APK
-        working-directory: example
+      - name: Lint, test, and enforce coverage for the Android core
+        working-directory: native/android
+        run: ./gradlew :core:lintDebug :core:testDebugUnitTest :core:coverageVerification
+      - name: Build the Flutter example release APK
+        working-directory: example/flutter
         run: flutter build apk --release
-      - name: Upload APK workflow artifact
+
+      - name: Build the AAR and publish it to GitHub Packages
+        working-directory: native/android
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew :core:publishReleasePublicationToMavenLocal :core:publishReleasePublicationToGitHubPackagesRepository -PlibraryVersion="$RELEASE_TAG"
+
+      - name: Collect release assets
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          src="$HOME/.m2/repository/com/mekari/mobile_hardening_kit/mobile-hardening-kit/$RELEASE_TAG"
+          mkdir -p "$RUNNER_TEMP/assets"
+          cp "$src/mobile-hardening-kit-$RELEASE_TAG.aar" \
+             "$src/mobile-hardening-kit-$RELEASE_TAG.pom" \
+             "$src/mobile-hardening-kit-$RELEASE_TAG.module" \
+             "$src/mobile-hardening-kit-$RELEASE_TAG-sources.jar" \
+             "$RUNNER_TEMP/assets/"
+          cp example/flutter/build/app/outputs/flutter-apk/app-release.apk \
+             "$RUNNER_TEMP/assets/mobile-hardening-kit-example-$RELEASE_TAG.apk"
+          ls -l "$RUNNER_TEMP/assets"
+
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mobile-hardening-kit-${{ github.ref_name }}-android-apk
-          path: example/build/app/outputs/flutter-apk/app-release.apk
+          name: mobile-hardening-kit-${{ github.ref_name }}-android
+          path: ${{ runner.temp }}/assets
           if-no-files-found: error
           retention-days: 90
-      - name: Publish GitHub Release with changelog and APK
+
+      - name: Publish GitHub Release with changelog notes, AAR, and example APK
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes-file CHANGELOG.md example/build/app/outputs/flutter-apk/app-release.apk
+        run: gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP"/assets/*

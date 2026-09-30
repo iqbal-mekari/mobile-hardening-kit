@@ -1,0 +1,140 @@
+apply plugin: "com.android.library"
+apply plugin: "kotlin-android"
+apply plugin: "maven-publish"
+apply plugin: "jacoco"
+
+group = "com.mekari.mobile_hardening_kit"
+// The release workflow passes the tag as -PlibraryVersion; keep the default in sync with pubspec.yaml.
+version = findProperty("libraryVersion") ?: "0.2.0"
+
+android {
+    namespace = "com.mekari.mobile_hardening_kit"
+    compileSdk = 34
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_1_8
+        allWarningsAsErrors = true
+    }
+
+    defaultConfig {
+        minSdk = 23
+    }
+
+    buildTypes {
+        debug {
+            enableUnitTestCoverage = true
+        }
+    }
+
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            all {
+                jacoco {
+                    includeNoLocationClasses = true
+                    excludes = ["jdk.internal.*"]
+                }
+            }
+        }
+    }
+
+    lint {
+        warningsAsErrors = true
+        abortOnError = true
+        checkDependencies = true
+    }
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+    }
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.robolectric:robolectric:4.11.1"
+}
+
+// Coverage gate: `./gradlew :core:testDebugUnitTest :core:coverageVerification`.
+def coverageClasses = fileTree(dir: "$buildDir/tmp/kotlin-classes/debug")
+def coverageExec = file("$buildDir/outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec")
+def coverageData = files(coverageExec)
+// JacocoCoverageVerification silently skips when no execution data exists; make that an error.
+def requireCoverageData = { ->
+    if (!coverageExec.exists()) throw new GradleException("No coverage data at $coverageExec")
+}
+
+tasks.register("coverageReport", JacocoReport) {
+    dependsOn "testDebugUnitTest"
+    doFirst(requireCoverageData)
+    classDirectories.setFrom(coverageClasses)
+    sourceDirectories.setFrom(files("src/main/kotlin"))
+    executionData.setFrom(coverageData)
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks.register("coverageVerification", JacocoCoverageVerification) {
+    dependsOn "testDebugUnitTest"
+    doFirst(requireCoverageData)
+    classDirectories.setFrom(coverageClasses)
+    executionData.setFrom(coverageData)
+    violationRules {
+        rule {
+            limit {
+                counter = "LINE"
+                minimum = 0.95
+            }
+        }
+        rule {
+            limit {
+                counter = "BRANCH"
+                minimum = 0.80
+            }
+        }
+    }
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+                artifactId = "mobile-hardening-kit"
+                pom {
+                    name = "Mobile Hardening Kit"
+                    description = "Heuristic client-side integrity and display signals for Android apps."
+                    url = "https://github.com/iqbal-mekari/mobile-hardening-kit"
+                    licenses {
+                        license {
+                            name = "MIT License"
+                            url = "https://github.com/iqbal-mekari/mobile-hardening-kit/blob/main/LICENSE"
+                        }
+                    }
+                    scm {
+                        url = "https://github.com/iqbal-mekari/mobile-hardening-kit"
+                    }
+                }
+            }
+        }
+        repositories {
+            // Used by the tagged release workflow; credentials come from the runner environment.
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/${System.getenv('GITHUB_REPOSITORY') ?: 'iqbal-mekari/mobile-hardening-kit'}")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR")
+                    password = System.getenv("GITHUB_TOKEN")
+                }
+            }
+        }
+    }
+}

@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   mobile_hardening_kit:
-    path: ../
+    path: ../../
 
 dev_dependencies:
   flutter_test:
