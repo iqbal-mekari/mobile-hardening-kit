@@ -4,7 +4,8 @@ apply plugin: "maven-publish"
 apply plugin: "jacoco"
 
 group = "com.mekari.mobile_hardening_kit"
-version = "0.1.0"
+// The release workflow passes the tag as -PlibraryVersion; keep the default in sync with pubspec.yaml.
+version = findProperty("libraryVersion") ?: "0.2.0"
 
 android {
     namespace = "com.mekari.mobile_hardening_kit"
@@ -108,6 +109,31 @@ afterEvaluate {
             release(MavenPublication) {
                 from components.release
                 artifactId = "mobile-hardening-kit"
+                pom {
+                    name = "Mobile Hardening Kit"
+                    description = "Heuristic client-side integrity and display signals for Android apps."
+                    url = "https://github.com/iqbal-mekari/mobile-hardening-kit"
+                    licenses {
+                        license {
+                            name = "MIT License"
+                            url = "https://github.com/iqbal-mekari/mobile-hardening-kit/blob/main/LICENSE"
+                        }
+                    }
+                    scm {
+                        url = "https://github.com/iqbal-mekari/mobile-hardening-kit"
+                    }
+                }
+            }
+        }
+        repositories {
+            // Used by the tagged release workflow; credentials come from the runner environment.
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/${System.getenv('GITHUB_REPOSITORY') ?: 'iqbal-mekari/mobile-hardening-kit'}")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR")
+                    password = System.getenv("GITHUB_TOKEN")
+                }
             }
         }
     }

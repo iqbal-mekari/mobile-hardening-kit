@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'mobile_hardening_kit'
-  s.version          = '0.1.0'
+  s.version          = '0.2.0'
   s.summary          = 'Client-side mobile integrity and display signals for Flutter apps.'
   s.description      = 'Native Android and iOS integrity and display signal collectors.'
   s.homepage         = 'https://github.com/iqbal-mekari/mobile-hardening-kit'

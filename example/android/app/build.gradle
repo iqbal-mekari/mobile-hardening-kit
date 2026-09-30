@@ -25,6 +25,6 @@ android {
 
 dependencies {
     // In an app outside this repo, use the Maven coordinates from the README instead:
-    // implementation "com.mekari.mobile_hardening_kit:mobile-hardening-kit:0.1.0"
+    // implementation "com.mekari.mobile_hardening_kit:mobile-hardening-kit:0.2.0"
     implementation project(":core")
 }

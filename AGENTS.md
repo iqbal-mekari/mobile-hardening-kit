@@ -70,7 +70,7 @@ On macOS, build the iOS example with `cd example/flutter && flutter build ios --
 - `lib/mobile_hardening_kit.dart`, `lib/src/hardening_signal.dart` — public contract and shared model.
 - `android/src/main/kotlin/com/mekari/mobile_hardening_kit/MobileHardeningKitPlugin.kt`, `ios/Classes/MobileHardeningKitPlugin.swift` — native collectors and protection helpers.
 - `example/ios/RunnerTests/RunnerTests.swift` — native iOS behavior checks.
-- `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `CHANGELOG.md` — CI gates, tag release, and release notes source. Release tags use `v*` and require a matching changelog heading.
+- `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `CHANGELOG.md` — CI gates, tag release, and release notes source. Release tags are bare semver (`X.Y.Z`, e.g. `0.2.0`); the tag must match `pubspec.yaml`, the podspec, and the Android core default version (`native/android/core/build.gradle`), and needs a matching `## [X.Y.Z]` changelog heading. The tag workflow publishes the Android AAR to GitHub Packages and attaches it to the GitHub Release; iOS and Flutter consume tagged sources.
 
 ## Runtime/Tooling Preferences
 

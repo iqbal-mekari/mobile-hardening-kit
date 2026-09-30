@@ -16,7 +16,7 @@ dependencies:
   mobile_hardening_kit:
     git:
       url: git@github.com:iqbal-mekari/mobile-hardening-kit.git
-      ref: v0.1.0
+      ref: 0.2.0
 ```
 
 ## Native integration (no Flutter)
@@ -30,16 +30,22 @@ The detection logic lives in two Flutter-free cores; the Flutter plugin only ada
 
 ### Android (Kotlin/Java, min SDK 23)
 
-Publish to the local Maven repository, then depend on it:
-
-```sh
-cd native/android && ./gradlew :core:publishReleasePublicationToMavenLocal
-```
+Each tagged release publishes the AAR to this repository's GitHub Packages (Maven) and attaches the AAR, POM, and Gradle metadata to the GitHub Release. GitHub Packages requires a token even for public packages: use a personal access token with `read:packages`, supplied as Gradle properties or environment variables (never commit it).
 
 ```gradle
-repositories { mavenLocal() }
-dependencies { implementation "com.mekari.mobile_hardening_kit:mobile-hardening-kit:0.1.0" }
+repositories {
+  maven {
+    url = uri("https://maven.pkg.github.com/iqbal-mekari/mobile-hardening-kit")
+    credentials {
+      username = providers.gradleProperty("gpr.user").orNull ?: System.getenv("GITHUB_ACTOR")
+      password = providers.gradleProperty("gpr.key").orNull ?: System.getenv("GITHUB_TOKEN")
+    }
+  }
+}
+dependencies { implementation "com.mekari.mobile_hardening_kit:mobile-hardening-kit:0.2.0" }
 ```
+
+To build locally instead: `cd native/android && ./gradlew :core:publishReleasePublicationToMavenLocal`, then use `mavenLocal()`.
 
 ```kotlin
 val kit = MobileHardeningKit(applicationContext)
@@ -66,7 +72,7 @@ Call all methods from the main thread. `detachActivity()` restores the window's 
 Swift Package Manager (root `Package.swift`, product `MobileHardeningKit`):
 
 ```swift
-.package(url: "git@github.com:iqbal-mekari/mobile-hardening-kit.git", from: "0.1.0")
+.package(url: "https://github.com/iqbal-mekari/mobile-hardening-kit", from: "0.2.0")
 ```
 
 ```swift
