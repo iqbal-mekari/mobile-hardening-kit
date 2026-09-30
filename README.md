@@ -88,8 +88,9 @@ Both cores emit `HardeningSignal(type, observedAt, metadata)`; `toMap()` (Kotlin
 
 ### Native samples
 
-- **Android** — `native/android/sample` (framework-only UI, depends on `:core`): `cd native/android && ./gradlew :sample:installDebug`, then launch "Hardening Kit Sample".
-- **iOS** — `samples/ios/MobileHardeningKitSample.xcodeproj` (SwiftUI, iOS 14+; consumes the root Swift package by local path through SPM): open it in Xcode and run on a simulator or device, or `xcodebuild -project samples/ios/MobileHardeningKitSample.xcodeproj -scheme MobileHardeningKitSample -destination 'platform=iOS Simulator,name=iPhone 17' build`.
+- **Android** — `example/android` (framework-only UI, depends on `:core` by project path): `cd example/android && ./gradlew :app:installDebug`, then launch "Hardening Kit Sample".
+- **iOS** — `example/ios/MobileHardeningKitSample.xcodeproj` (SwiftUI, iOS 14+; consumes the root Swift package by local path through SPM): open it in Xcode and run on a simulator or device, or `xcodebuild -project example/ios/MobileHardeningKitSample.xcodeproj -scheme MobileHardeningKitSample -destination 'platform=iOS Simulator,name=iPhone 17' build`.
+- **Flutter** — `example/flutter` (see below).
 
 Both show a snapshot, live events, and the opt-in protection toggle. On the iOS simulator the `jailbreak` finding comes from host-shared paths such as `/usr/bin/ssh`; this is an expected heuristic false positive.
 
@@ -155,7 +156,7 @@ Android applies `FLAG_SECURE` to the attached Flutter activity window (so it aff
 
 ## Example
 
-`example/` is a Flutter app that runs a scan, displays current findings, subscribes to display/capture events, and toggles the opt-in protection helper. Run it on an Android or iOS device/simulator with `cd example && flutter run`.
+`example/` holds one sample per integration style: `example/flutter` (Flutter app), `example/android` (native Android), and `example/ios` (native iOS, SPM). The Flutter app runs a scan, displays current findings, subscribes to display/capture events, and toggles the opt-in protection helper. Run it on an Android or iOS device/simulator with `cd example/flutter && flutter run`.
 
 ## Testing signal triggers
 
@@ -211,7 +212,7 @@ Stop Frida and disable/uninstall test modules after testing. Root/jailbreak and 
 From the repository root, start the example on a device or simulator:
 
 ```sh
-cd example
+cd example/flutter
 flutter pub get
 flutter devices
 flutter run -d DEVICE_ID
@@ -243,7 +244,7 @@ On Android 12, SELinux denied the sample's `/proc/net/tcp` read, so `tracerPort`
 | `accessibilityUnrecognized` | Enable an accessibility service such as TalkBack, then scan. The example supplies no trusted-package allowlist, so enabled external services are included in the signal metadata. Turn the service off afterward. |
 | `screenshotTaken` | On Android 14/API 34 or later, take a device screenshot while the example is foregrounded. The signal is delivered by the event stream, not by a later snapshot. |
 | `externalDisplay` | Connect or cast to a secondary display that Android exposes as a presentation display. Emulator virtual presentation displays can also produce this finding. |
-| `signatureMismatch` | For a local-only test, pass a deliberately incorrect 64-character SHA-256 value to `MobileHardeningKit(expectedSigningCertificateSha256: ...)` in `example/lib/main.dart`, rebuild, and scan. Remove the test value afterward; do not commit it. |
+| `signatureMismatch` | For a local-only test, pass a deliberately incorrect 64-character SHA-256 value to `MobileHardeningKit(expectedSigningCertificateSha256: ...)` in `example/flutter/lib/main.dart`, rebuild, and scan. Remove the test value afterward; do not commit it. |
 | `root`, `instrumentation` | These require a test environment with a recognized root artifact/build tag or instrumentation library/listener. There is no reliable standard-emulator toggle; use only an isolated, authorized test device. |
 
 To trigger `signatureMismatch`, temporarily replace the example's `_kit` initializer with this deliberately incorrect test fingerprint, then rebuild and scan:
@@ -291,7 +292,7 @@ With protection enabled and the app switcher open, the POCO F1 (Android 12/API 3
 flutter pub get
 flutter analyze
 flutter test
-cd example && flutter pub get && flutter build apk --debug
+cd example/flutter && flutter pub get && flutter build apk --debug
 ```
 
 GitHub Actions analyzes and tests the package and example and builds the Android example for pull requests. Pushing a `v*` tag runs the same checks, builds a release APK, uploads it as a workflow artifact and GitHub Release asset, and uses `CHANGELOG.md` as the release notes. Update the changelog before every release tag.

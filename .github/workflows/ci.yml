@@ -1,43 +1,54 @@
-name: Flutter CI
+name: CI
 
+# Every pull request runs lint, tests, and coverage gates for Dart, Android
+# (native core + Flutter adapter), and iOS (native core + Flutter adapter).
 on:
-  push:
-    branches: ['**']
   pull_request:
-    branches: ['**']
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.24.0
+
 jobs:
-  flutter:
+  dart:
+    name: Dart (format, analyze, test, coverage)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Flutter 3.24.0 from the official repository
+      - name: Install Flutter ${{ env.FLUTTER_VERSION }} from the official repository
         run: |
-          git clone --depth 1 --branch 3.24.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
-      - name: Resolve package dependencies
-        run: flutter pub get
-      - name: Resolve example dependencies
-        working-directory: example
-        run: flutter pub get
-      - name: Analyze Dart
+      - name: Resolve dependencies
+        run: |
+          flutter pub get
+          (cd example/flutter && flutter pub get)
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed lib test example/flutter/lib example/flutter/test
+      - name: Analyze package
         run: flutter analyze --fatal-infos
-      - name: Analyze example Dart
-        working-directory: example
+      - name: Analyze Flutter example
+        working-directory: example/flutter
         run: flutter analyze --fatal-infos
-      - name: Test package
+      - name: Test package with coverage
+        run: flutter test --coverage
+      - name: Enforce package line coverage (95%)
+        run: python3 tool/check_lcov.py coverage/lcov.info 95
+      - name: Test Flutter example
+        working-directory: example/flutter
         run: flutter test
-      - name: Test example app
-        working-directory: example
-        run: flutter test
-      - name: Build Android example
-        working-directory: example
-        run: flutter build apk --debug
 
-  native-android:
+  android-native:
+    name: Android native core (lint, test, coverage, sample)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,15 +56,98 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Build and package the native Android core
+      - name: Lint, unit-test, and enforce coverage for the core
         working-directory: native/android
-        run: ./gradlew :core:assembleRelease :core:publishReleasePublicationToMavenLocal :sample:assembleDebug
+        run: ./gradlew :core:lintDebug :core:testDebugUnitTest :core:coverageVerification
+      - name: Package the core
+        working-directory: native/android
+        run: ./gradlew :core:assembleRelease :core:publishReleasePublicationToMavenLocal
+      - name: Build the native Android sample
+        working-directory: example/android
+        run: ./gradlew :app:assembleDebug
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-native-reports
+          path: |
+            native/android/core/build/reports/tests
+            native/android/core/build/reports/jacoco
+            native/android/core/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
 
-  native-ios:
+  android-flutter:
+    name: Android Flutter adapter (lint, test, coverage, APK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Flutter ${{ env.FLUTTER_VERSION }} from the official repository
+        run: |
+          git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Resolve example dependencies
+        working-directory: example/flutter
+        run: flutter pub get
+      - name: Build the Flutter example APK
+        working-directory: example/flutter
+        run: flutter build apk --debug
+      - name: Lint, unit-test, and enforce coverage for the plugin module
+        working-directory: example/flutter/android
+        run: ./gradlew :mobile_hardening_kit:lintDebug :mobile_hardening_kit:testDebugUnitTest :mobile_hardening_kit:coverageVerification
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-flutter-reports
+          path: |
+            example/flutter/build/mobile_hardening_kit/reports
+          if-no-files-found: ignore
+
+  ios-native:
+    name: iOS native core (swift-format, test, coverage, sample)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build the Swift package for iOS
-        run: xcodebuild -scheme MobileHardeningKit -destination 'generic/platform=iOS Simulator' build
-      - name: Build the SwiftUI sample against the local package
-        run: xcodebuild -project samples/ios/MobileHardeningKitSample.xcodeproj -scheme MobileHardeningKitSample -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
+      - name: Select an available iPhone simulator
+        run: |
+          DEVICE=$(xcrun simctl list devices available | grep -m1 -oE 'iPhone [0-9]+[A-Za-z ]*[A-Za-z0-9]' || true)
+          test -n "$DEVICE" || { echo "no iPhone simulator available"; exit 1; }
+          echo "DEVICE=$DEVICE" >> "$GITHUB_ENV"
+      - name: Lint Swift (swift-format, strict)
+        run: xcrun swift-format lint --strict --recursive Package.swift ios/Classes ios/Tests example/ios/MobileHardeningKitSample example/flutter/ios/RunnerTests example/flutter/ios/Runner/AppDelegate.swift
+      - name: Test the Swift package with coverage
+        run: xcodebuild test -scheme MobileHardeningKit -destination "platform=iOS Simulator,name=$DEVICE" -derivedDataPath "$RUNNER_TEMP/spm-dd" -enableCodeCoverage YES -resultBundlePath "$RUNNER_TEMP/spm.xcresult"
+      - name: Enforce core line coverage (95%)
+        run: python3 tool/check_xccov.py "$RUNNER_TEMP/spm.xcresult" MobileHardeningKit.swift 95
+      - name: Build the native iOS sample
+        run: xcodebuild -project example/ios/MobileHardeningKitSample.xcodeproj -scheme MobileHardeningKitSample -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
+
+  ios-flutter:
+    name: iOS Flutter adapter (test, coverage, build)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Flutter ${{ env.FLUTTER_VERSION }} from the official repository
+        run: |
+          git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Select an available iPhone simulator
+        run: |
+          DEVICE=$(xcrun simctl list devices available | grep -m1 -oE 'iPhone [0-9]+[A-Za-z ]*[A-Za-z0-9]' || true)
+          test -n "$DEVICE" || { echo "no iPhone simulator available"; exit 1; }
+          echo "DEVICE=$DEVICE" >> "$GITHUB_ENV"
+      - name: Resolve example dependencies
+        working-directory: example/flutter
+        run: flutter pub get
+      - name: Build the Flutter example for the simulator
+        working-directory: example/flutter
+        run: flutter build ios --simulator --no-codesign
+      - name: Test the Flutter iOS adapter with coverage
+        working-directory: example/flutter/ios
+        run: xcodebuild test -workspace Runner.xcworkspace -scheme Runner -destination "platform=iOS Simulator,name=$DEVICE" -derivedDataPath "$RUNNER_TEMP/runner-dd" -enableCodeCoverage YES -resultBundlePath "$RUNNER_TEMP/runner.xcresult"
+      - name: Enforce adapter line coverage (90%)
+        run: python3 tool/check_xccov.py "$RUNNER_TEMP/runner.xcresult" MobileHardeningKitPlugin.swift 90

@@ -195,4 +195,63 @@ void main() {
       )),
     );
   });
+
+  test('snapshot sends configured certificate and trusted packages', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return <Object?>[];
+    });
+
+    await MobileHardeningKit(
+      expectedSigningCertificateSha256: 'ab:cd',
+      trustedAccessibilityPackages: const <String>{'com.trusted'},
+    ).snapshot();
+
+    expect(received?.method, 'snapshot');
+    expect(received?.arguments, <String, Object?>{
+      'expectedSigningCertificateSha256': 'ab:cd',
+      'trustedAccessibilityPackages': <String>['com.trusted'],
+    });
+  });
+
+  test('snapshot omits the certificate argument when unset', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return <Object?>[];
+    });
+
+    await MobileHardeningKit().snapshot();
+
+    expect(received?.arguments, <String, Object?>{
+      'trustedAccessibilityPackages': <String>[],
+    });
+  });
+
+  test('setScreenProtectionEnabled sends the flag and propagates errors',
+      () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      if ((call.arguments as Map<Object?, Object?>)['enabled'] == false) {
+        throw PlatformException(code: 'unavailable');
+      }
+      return null;
+    });
+    final kit = MobileHardeningKit();
+
+    await kit.setScreenProtectionEnabled(true);
+    await expectLater(
+      kit.setScreenProtectionEnabled(false),
+      throwsA(isA<PlatformException>()),
+    );
+
+    expect(calls.map((call) => call.method),
+        <String>['setScreenProtectionEnabled', 'setScreenProtectionEnabled']);
+    expect(calls.map((call) => call.arguments), <Object?>[
+      <String, Object?>{'enabled': true},
+      <String, Object?>{'enabled': false},
+    ]);
+  });
 }

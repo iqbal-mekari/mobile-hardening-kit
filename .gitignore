@@ -39,3 +39,8 @@ build/
 **/Flutter/ephemeral/
 **/Flutter/Generated.xcconfig
 **/ephemeral/
+
+# Test coverage and SwiftPM build output
+coverage/
+.build/
+.swiftpm/
