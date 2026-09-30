@@ -1,0 +1,3 @@
+rootProject.name = 'mobile-hardening-kit-native'
+include ':core'
+include ':sample'
