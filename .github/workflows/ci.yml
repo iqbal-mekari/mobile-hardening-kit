@@ -62,7 +62,7 @@ jobs:
       - name: Package the core
         working-directory: native/android
         run: ./gradlew :core:assembleRelease :core:publishReleasePublicationToMavenLocal
-      - name: Build the native Android sample
+      - name: Build the native Android sample (released AAR from GitHub Release assets)
         working-directory: example/android
         run: ./gradlew :app:assembleDebug
       - name: Upload reports
@@ -123,7 +123,7 @@ jobs:
         run: xcodebuild test -scheme MobileHardeningKit -destination "platform=iOS Simulator,name=$DEVICE" -derivedDataPath "$RUNNER_TEMP/spm-dd" -enableCodeCoverage YES -resultBundlePath "$RUNNER_TEMP/spm.xcresult"
       - name: Enforce core line coverage (95%)
         run: python3 tool/check_xccov.py "$RUNNER_TEMP/spm.xcresult" MobileHardeningKit.swift 95
-      - name: Build the native iOS sample
+      - name: Build the native iOS sample (tagged sources from GitHub via SPM)
         run: xcodebuild -project example/ios/MobileHardeningKitSample.xcodeproj -scheme MobileHardeningKitSample -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
 
   ios-flutter:

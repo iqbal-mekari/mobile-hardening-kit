@@ -1,5 +1,2 @@
 rootProject.name = 'mobile-hardening-kit-android-example'
 include ':app'
-// The library under test lives outside this project.
-include ':core'
-project(':core').projectDir = file('../../native/android/core')
