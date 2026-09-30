@@ -13,7 +13,26 @@ buildscript {
 
 allprojects {
     repositories {
+        // Iterate on unreleased source: run `./gradlew :core:publishReleasePublicationToMavenLocal
+        // -PlibraryVersion=<version>` in native/android, then build this sample with -PmhkUseMavenLocal.
+        if (project.hasProperty("mhkUseMavenLocal")) {
+            mavenLocal()
+        }
         google()
         mavenCentral()
+        // Released AAR and Gradle module metadata attached to each GitHub Release (anonymous access).
+        ivy {
+            url = uri("https://github.com/iqbal-mekari/mobile-hardening-kit/releases/download")
+            patternLayout {
+                artifact "[revision]/[artifact]-[revision].[ext]"
+            }
+            metadataSources {
+                gradleMetadata()
+                artifact()
+            }
+            content {
+                includeGroup "com.mekari.mobile_hardening_kit"
+            }
+        }
     }
 }

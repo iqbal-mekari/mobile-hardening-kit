@@ -1,0 +1,15 @@
+{
+  "originHash" : "7afc64dcc5227f6a559262f12ba0ef9c80f1cafe156b709d704b991b61ca4357",
+  "pins" : [
+    {
+      "identity" : "mobile-hardening-kit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/iqbal-mekari/mobile-hardening-kit",
+      "state" : {
+        "revision" : "7b564a0e46afd9c4e866ba90716611b220e7d2bf",
+        "version" : "0.2.0"
+      }
+    }
+  ],
+  "version" : 3
+}
