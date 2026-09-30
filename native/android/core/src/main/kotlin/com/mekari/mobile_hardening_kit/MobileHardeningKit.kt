@@ -1,5 +1,6 @@
 package com.mekari.mobile_hardening_kit
 
+import android.annotation.SuppressLint
 import android.annotation.TargetApi
 import android.app.Activity
 import android.content.Context
@@ -23,7 +24,12 @@ import java.util.TimeZone
  * Call from the main thread. Lifecycle: [attachActivity] / [detachActivity] follow the
  * host activity; [startObserving] / [stopObserving] follow the event consumer.
  */
-class MobileHardeningKit(context: Context) : DisplayManager.DisplayListener {
+class MobileHardeningKit internal constructor(
+  context: Context,
+  private val files: FileAccess
+) : DisplayManager.DisplayListener {
+  constructor(context: Context) : this(context, SystemFiles)
+
   private val context: Context = context.applicationContext
   private val displayManager =
     this.context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -45,7 +51,7 @@ class MobileHardeningKit(context: Context) : DisplayManager.DisplayListener {
       "/data/local/xbin/su", "/data/local/bin/su", "/system/sd/xbin/su",
       "/system/bin/.ext/.su", "/system/usr/we-need-root/su-backup", "/system/xbin/daemonsu",
       "/data/adb/magisk", "/sbin/.magisk", "/data/adb/ksu", "/data/adb/ap"
-    ).filter { File(it).exists() }
+    ).filter(files::exists)
     val testKeys = Build.TAGS?.contains("test-keys") == true
     val magiskManagerPackage = "com.topjohnwu.magisk"
     val hasMagiskManager = runCatching {
@@ -57,7 +63,7 @@ class MobileHardeningKit(context: Context) : DisplayManager.DisplayListener {
     if (hasMagiskManager) rootDetails += "managerPackage" to magiskManagerPackage
     if (rootDetails.isNotEmpty()) add(HardeningSignalType.ROOT, *rootDetails.toTypedArray())
 
-    val maps = runCatching { File("/proc/self/maps").readLines() }.getOrDefault(emptyList())
+    val maps = runCatching { files.readLines("/proc/self/maps") }.getOrDefault(emptyList())
     val hookArtifacts = maps.asSequence().filter {
       val line = it.lowercase()
       listOf("frida", "gum-js-loop", "gadget", "xposed", "lsposed", "substrate", "libhooker").any(line::contains)
@@ -76,9 +82,11 @@ class MobileHardeningKit(context: Context) : DisplayManager.DisplayListener {
 
     val expectedCertificate = config.expectedSigningCertificateSha256
     if (expectedCertificate != null) {
-      val installed = signingCertificateSha256()
-      if (installed == null || !installed.equals(expectedCertificate.replace(":", "").lowercase(), true)) {
-        add(HardeningSignalType.SIGNATURE_MISMATCH, "certificateAvailable" to (installed != null))
+      val installed = signingCertificateSha256s()
+      val expected = expectedCertificate.replace(":", "")
+      // Every reported signer must match; an extra forged certificate must not pass.
+      if (installed.isEmpty() || !installed.all { it.equals(expected, true) }) {
+        add(HardeningSignalType.SIGNATURE_MISMATCH, "certificateAvailable" to installed.isNotEmpty())
       }
     }
 
@@ -152,7 +160,7 @@ class MobileHardeningKit(context: Context) : DisplayManager.DisplayListener {
   }
 
   private fun listeningFridaPort(): Int? = runCatching {
-    File("/proc/net/tcp").readLines().drop(1).firstNotNullOfOrNull { row ->
+    files.readLines("/proc/net/tcp").drop(1).firstNotNullOfOrNull { row ->
       val columns = row.trim().split(Regex("\\s+"))
       if (columns.size > 3 && columns[1].substringAfter(':', "").toIntOrNull(16) in listOf(27042, 27043) &&
         columns[3] == "0A") columns[1].substringAfter(':').toInt(16) else null
@@ -160,7 +168,8 @@ class MobileHardeningKit(context: Context) : DisplayManager.DisplayListener {
   }.getOrNull()
 
   @Suppress("DEPRECATION")
-  private fun signingCertificateSha256(): String? = runCatching {
+  @SuppressLint("PackageManagerGetSignatures") // API < 28 has no alternative; all signers are validated by the caller.
+  private fun signingCertificateSha256s(): List<String> = runCatching {
     val packageInfo = if (Build.VERSION.SDK_INT >= 28) {
       context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
     } else {
@@ -171,10 +180,11 @@ class MobileHardeningKit(context: Context) : DisplayManager.DisplayListener {
     } else {
       packageInfo.signatures
     }
-    signatures?.firstOrNull()?.toByteArray()?.let { bytes ->
-      MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    signatures.orEmpty().map { signature ->
+      MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+        .joinToString("") { "%02x".format(it) }
     }
-  }.getOrNull()
+  }.getOrDefault(emptyList())
 
   private fun isoTimestamp(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
     .apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date())
@@ -220,4 +230,15 @@ class MobileHardeningKit(context: Context) : DisplayManager.DisplayListener {
   override fun onDisplayAdded(displayId: Int) = emitExternalDisplayState()
   override fun onDisplayRemoved(displayId: Int) = emitExternalDisplayState()
   override fun onDisplayChanged(displayId: Int) = emitExternalDisplayState()
+}
+
+/** Filesystem reads used by detectors; replaceable in tests. */
+internal interface FileAccess {
+  fun exists(path: String): Boolean
+  fun readLines(path: String): List<String>
+}
+
+internal object SystemFiles : FileAccess {
+  override fun exists(path: String): Boolean = File(path).exists()
+  override fun readLines(path: String): List<String> = File(path).readLines()
 }

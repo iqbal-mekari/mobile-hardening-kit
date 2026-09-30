@@ -1,6 +1,7 @@
 apply plugin: "com.android.library"
 apply plugin: "kotlin-android"
 apply plugin: "maven-publish"
+apply plugin: "jacoco"
 
 group = "com.mekari.mobile_hardening_kit"
 version = "0.1.0"
@@ -16,15 +17,87 @@ android {
 
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_1_8
+        allWarningsAsErrors = true
     }
 
     defaultConfig {
         minSdk = 23
     }
 
+    buildTypes {
+        debug {
+            enableUnitTestCoverage = true
+        }
+    }
+
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            all {
+                jacoco {
+                    includeNoLocationClasses = true
+                    excludes = ["jdk.internal.*"]
+                }
+            }
+        }
+    }
+
+    lint {
+        warningsAsErrors = true
+        abortOnError = true
+        checkDependencies = true
+    }
+
     publishing {
         singleVariant("release") {
             withSourcesJar()
+        }
+    }
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.robolectric:robolectric:4.11.1"
+}
+
+// Coverage gate: `./gradlew :core:testDebugUnitTest :core:coverageVerification`.
+def coverageClasses = fileTree(dir: "$buildDir/tmp/kotlin-classes/debug")
+def coverageExec = file("$buildDir/outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec")
+def coverageData = files(coverageExec)
+// JacocoCoverageVerification silently skips when no execution data exists; make that an error.
+def requireCoverageData = { ->
+    if (!coverageExec.exists()) throw new GradleException("No coverage data at $coverageExec")
+}
+
+tasks.register("coverageReport", JacocoReport) {
+    dependsOn "testDebugUnitTest"
+    doFirst(requireCoverageData)
+    classDirectories.setFrom(coverageClasses)
+    sourceDirectories.setFrom(files("src/main/kotlin"))
+    executionData.setFrom(coverageData)
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks.register("coverageVerification", JacocoCoverageVerification) {
+    dependsOn "testDebugUnitTest"
+    doFirst(requireCoverageData)
+    classDirectories.setFrom(coverageClasses)
+    executionData.setFrom(coverageData)
+    violationRules {
+        rule {
+            limit {
+                counter = "LINE"
+                minimum = 0.95
+            }
+        }
+        rule {
+            limit {
+                counter = "BRANCH"
+                minimum = 0.80
+            }
         }
     }
 }
