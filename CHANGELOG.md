@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- Flutter-free native cores for direct Android (`native/android`, Gradle library with Maven publishing) and iOS (root `Package.swift`, product `MobileHardeningKit`) integration, with `snapshot`, `startObserving`/`stopObserving`, and opt-in screen protection.
+
+- Native samples: Android (`native/android/sample`) and iOS SwiftUI app (`samples/ios`, SPM local package).
+
+### Fixed
+- Android: declare `android.permission.DETECT_SCREEN_CAPTURE`. Without it, starting event observation on Android 14+ threw `SecurityException` from `registerScreenCaptureCallback` and crashed the host app (Flutter and native).
+
+### Changed
+- The Flutter plugins are now thin adapters over the native cores; the method/event channel contract and Dart API are unchanged.
+- The iOS `PrivacyInfo.xcprivacy` moved to `ios/Classes/Core` and is now bundled by the pod (`resource_bundles`) and the Swift package.
+
 ## [0.1.0] - 2026-09-25
 
 ### Added

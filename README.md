@@ -1,6 +1,6 @@
 # Mobile Hardening Kit
 
-A dependency-light Flutter plugin that collects heuristic client-side integrity and display signals through in-house Dart, Kotlin, and Swift implementations. **The kit reports signals; it never blocks a user flow or makes a product risk decision.** Client-side checks are bypassable and are not a security boundary.
+A dependency-light library that collects heuristic client-side integrity and display signals through in-house Kotlin and Swift cores. It can be used directly from native Android and iOS apps, or through the Flutter plugin, which is a thin wrapper over the same native cores. **The kit reports signals; it never blocks a user flow or makes a product risk decision.** Client-side checks are bypassable and are not a security boundary.
 
 ## Requirements
 
@@ -18,6 +18,80 @@ dependencies:
       url: git@github.com:iqbal-mekari/mobile-hardening-kit.git
       ref: v0.1.0
 ```
+
+## Native integration (no Flutter)
+
+The detection logic lives in two Flutter-free cores; the Flutter plugin only adapts them to method/event channels.
+
+| Platform | Core | Flutter adapter |
+| --- | --- | --- |
+| Android | `native/android/core` (`MobileHardeningKit.kt`, `HardeningSignal.kt`) | `android/.../MobileHardeningKitPlugin.kt` |
+| iOS | `ios/Classes/Core` (`MobileHardeningKit.swift`, `HardeningSignal.swift`) | `ios/Classes/MobileHardeningKitPlugin.swift` |
+
+### Android (Kotlin/Java, min SDK 23)
+
+Publish to the local Maven repository, then depend on it:
+
+```sh
+cd native/android && ./gradlew :core:publishReleasePublicationToMavenLocal
+```
+
+```gradle
+repositories { mavenLocal() }
+dependencies { implementation "com.mekari.mobile_hardening_kit:mobile-hardening-kit:0.1.0" }
+```
+
+```kotlin
+val kit = MobileHardeningKit(applicationContext)
+val signals = kit.snapshot(
+  HardeningConfig(
+    expectedSigningCertificateSha256 = "0123...abcd", // optional
+    trustedAccessibilityPackages = setOf("com.example.approvedaccessibility"),
+  )
+)
+
+// Optional: events and opt-in FLAG_SECURE need the host activity.
+kit.attachActivity(activity)          // onCreate/onStart; pair with detachActivity() in onDestroy
+kit.startObserving { signal -> /* HardeningSignal */ }
+kit.setScreenProtectionEnabled(true)  // sensitive flow only
+// ...
+kit.stopObserving()
+kit.detachActivity()
+```
+
+Call all methods from the main thread. `detachActivity()` restores the window's original `FLAG_SECURE` state. The library manifest declares `DETECT_SCREEN_CAPTURE` (normal permission, needed for Android 14+ screenshot events) and the Magisk `<queries>` entry; both merge into your app.
+
+### iOS (Swift, iOS 13+)
+
+Swift Package Manager (root `Package.swift`, product `MobileHardeningKit`):
+
+```swift
+.package(url: "git@github.com:iqbal-mekari/mobile-hardening-kit.git", from: "0.1.0")
+```
+
+```swift
+import MobileHardeningKit
+
+let kit = MobileHardeningKit()
+let signals = kit.snapshot()                 // [HardeningSignal]
+kit.startObserving { signal in /* capture, screenshot, external display changes */ }
+kit.setScreenProtectionEnabled(true)         // sensitive flow only; blurs the app-switcher snapshot
+// ...
+kit.stopObserving()
+```
+
+iOS has no signer-certificate config: it cannot read its signing fingerprint. To use the `jailbreak` URL-scheme check, add `cydia` and `sileo` to the host app's `LSApplicationQueriesSchemes`. Call from the main thread.
+
+### Signal schema
+
+Both cores emit `HardeningSignal(type, observedAt, metadata)`; `toMap()` (Kotlin) / `dictionary` (Swift) yield the map the Flutter channel and Dart decoder use. Type names are identical across Kotlin, Swift, and Dart (`HardeningSignalType`).
+
+### Native samples
+
+- **Android** — `native/android/sample` (framework-only UI, depends on `:core`): `cd native/android && ./gradlew :sample:installDebug`, then launch "Hardening Kit Sample".
+- **iOS** — `samples/ios/MobileHardeningKitSample.xcodeproj` (SwiftUI, iOS 14+; consumes the root Swift package by local path through SPM): open it in Xcode and run on a simulator or device, or `xcodebuild -project samples/ios/MobileHardeningKitSample.xcodeproj -scheme MobileHardeningKitSample -destination 'platform=iOS Simulator,name=iPhone 17' build`.
+
+Both show a snapshot, live events, and the opt-in protection toggle. On the iOS simulator the `jailbreak` finding comes from host-shared paths such as `/usr/bin/ssh`; this is an expected heuristic false positive.
 
 ## Collect signals
 

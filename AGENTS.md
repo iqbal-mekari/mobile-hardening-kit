@@ -8,15 +8,16 @@
 
 - `lib/mobile_hardening_kit.dart` is the public API. It sends point-in-time requests and protection toggles over the `mobile_hardening_kit` `MethodChannel`, and exposes native state changes from `mobile_hardening_kit/events` as a broadcast stream.
 - `lib/src/hardening_signal.dart` defines shared signal types and observation records. Keep map fields (`type`, `observedAt`, `metadata`) aligned across Dart, Kotlin, and Swift; snapshots contain at most one record per signal type, while event streams can repeat types for state transitions.
-- Android's `ActivityAware` plugin performs platform checks and manages activity/window and display lifecycles. iOS registers a Flutter plugin and uses UIKit notifications for capture, display, and app-state observations. Platform-specific checks belong in their native implementations; do not duplicate them in Dart.
+- Detection and lifecycle logic lives in Flutter-free native cores: `native/android/core` (Kotlin, standalone Gradle library; its sources are also compiled into the Flutter Android module via a `srcDirs` entry in `android/build.gradle`) and `ios/Classes/Core` (Swift; exposed by root `Package.swift` and compiled by the pod). `MobileHardeningKitPlugin` on each platform is only a channel adapter; add or change checks in the core, never in the adapter or Dart. Cores expose `snapshot`, `startObserving`/`stopObserving`, and opt-in screen protection, and emit the same `type`/`observedAt`/`metadata` schema. CocoaPods ignores `..` globs and symlinked dirs, so keep iOS core files inside `ios/`.
 - `example/lib/main.dart` shows the consumer flow: snapshot, subscribe/cancel, and opt-in protection. There is no state-management or dependency-injection framework.
 - Checks are best-effort: unsupported checks are omitted, unknown signal types fail decoding with `FormatException`, and findings must not be interpreted as proof of device integrity. iOS cannot expose a signing certificate fingerprint or prevent screenshots; Android presentation-display findings can include virtual displays.
 
 ## Key Directories
 
 - `lib/`, `lib/src/` — public Flutter API and shared signal model.
-- `android/src/main/kotlin/` — Android native plugin implementation; `android/build.gradle` configures the library.
-- `ios/Classes/`, `ios/mobile_hardening_kit.podspec` — Swift implementation and CocoaPods integration.
+- `android/src/main/kotlin/` — Flutter Android adapter; `android/build.gradle` configures the plugin library. `native/android/` — standalone native Android Gradle project (`:core`, Maven publishing, own wrapper).
+- `ios/Classes/` — Flutter iOS adapter; `ios/Classes/Core/` — native Swift core and `PrivacyInfo.xcprivacy`; `ios/mobile_hardening_kit.podspec` — CocoaPods integration; `Package.swift` — SwiftPM product `MobileHardeningKit`.
+- `native/android/sample/`, `samples/ios/` — native (non-Flutter) sample apps; the iOS project consumes the root package by local SPM path. Keep sample UI dependency-free.
 - `example/lib/`, `example/android/`, `example/ios/` — runnable host app and platform projects.
 - `test/`, `example/test/`, `example/ios/RunnerTests/` — Dart package tests, example widget test, and iOS simulator XCTest.
 - `.github/workflows/` — pull-request CI and tagged Android release automation.
