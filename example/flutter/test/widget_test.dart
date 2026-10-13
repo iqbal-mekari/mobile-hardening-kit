@@ -1,19 +1,62 @@
 import 'dart:async';
+import 'dart:convert';
 
-import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_hardening_kit_example/main.dart';
+import 'package:mobile_hardening_kit_example/play_sample_client.dart';
+
+class _ScriptedPlaySampleClient extends PlaySampleClient {
+  _ScriptedPlaySampleClient(this.responses)
+      : super(backend: null, cloudProjectNumber: null);
+
+  final List<Object> responses;
+  final List<(bool, List<String>)> submittedKitSnapshots =
+      <(bool, List<String>)>[];
+
+  @override
+  Future<Map<String, Object?>> check({
+    required String policy,
+    required bool kitAvailable,
+    required List<String> kitSignals,
+  }) async {
+    submittedKitSnapshots.add((kitAvailable, List<String>.of(kitSignals)));
+    final response = responses.removeAt(0);
+    if (response is Exception) throw response;
+    return response as Map<String, Object?>;
+  }
+}
+
+Map<String, Object?> _verifiedAllow() => <String, Object?>{
+      'verification': 'verified',
+      'policy': 'or',
+      'verdicts': <String, Object?>{
+        'appRecognition': 'PLAY_RECOGNIZED',
+        'appLicensing': 'LICENSED',
+        'deviceRecognition': <String>['MEETS_DEVICE_INTEGRITY'],
+      },
+      'risk': <String, String>{
+        'kit': 'unavailable',
+        'provider': 'notDetected',
+        'combined': 'notDetected',
+      },
+      'decision': 'allow',
+      'reasons': <String>[],
+    };
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const methodChannel = MethodChannel('mobile_hardening_kit');
+  const playChannel =
+      MethodChannel('mobile_hardening_kit_example/play_integrity');
   const eventChannel = EventChannel('mobile_hardening_kit/events');
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
   tearDown(() {
     messenger.setMockMethodCallHandler(methodChannel, null);
+    messenger.setMockMethodCallHandler(playChannel, null);
     messenger.setMockStreamHandler(eventChannel, null);
   });
 
@@ -263,5 +306,108 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sample check explains unconfigured state without affecting kit',
+      (tester) async {
+    messenger.setMockMethodCallHandler(
+      methodChannel,
+      (call) async => <Object?>[],
+    );
+    messenger.setMockStreamHandler(
+      eventChannel,
+      MockStreamHandler.inline(onListen: (arguments, events) {}),
+    );
+    await tester.pumpWidget(const HardeningExampleApp());
+    await tester.pumpAndSettle();
+
+    final checkButton = find.byKey(const ValueKey<String>('check-sample'));
+    await tester.scrollUntilVisible(
+      checkButton,
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(checkButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sample check unavailable'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('sample-result')), findsNothing);
+  });
+
+  test(
+      'response parser rejects unknown verdicts and binding separates availability',
+      () {
+    final unknownVerdict = _verifiedAllow()
+      ..['verdicts'] = <String, Object?>{
+        'appRecognition': 'UNRECOGNIZED_ACCOUNT',
+        'appLicensing': 'LICENSED',
+        'deviceRecognition': <String>['MEETS_DEVICE_INTEGRITY'],
+      };
+    expect(
+      () =>
+          PlaySampleClient.parseResponse(200, jsonEncode(unknownVerdict), 'or'),
+      throwsA(isA<PlaySampleException>()),
+    );
+    expect(
+      PlaySampleClient.canonical(
+        requestId: 'a' * 32,
+        policy: 'or',
+        kitAvailable: false,
+        kitSignals: const <String>[],
+      ),
+      isNot(PlaySampleClient.canonical(
+        requestId: 'a' * 32,
+        policy: 'or',
+        kitAvailable: true,
+        kitSignals: const <String>[],
+      )),
+    );
+  });
+
+  testWidgets('later provider error clears allow and submits unknown snapshot',
+      (tester) async {
+    var snapshotCalls = 0;
+    messenger.setMockMethodCallHandler(methodChannel, (call) async {
+      snapshotCalls++;
+      if (snapshotCalls == 3) {
+        throw PlatformException(code: 'snapshot_error');
+      }
+      return <Object?>[
+        <String, Object?>{
+          'type': 'externalDisplay',
+          'observedAt': '2026-10-13T00:00:00Z',
+          'metadata': <String, Object?>{},
+        },
+      ];
+    });
+    messenger.setMockStreamHandler(
+      eventChannel,
+      MockStreamHandler.inline(onListen: (arguments, events) {}),
+    );
+    final client = _ScriptedPlaySampleClient(<Object>[
+      _verifiedAllow(),
+      const PlaySampleException('Provider unavailable'),
+    ]);
+    await tester.pumpWidget(
+      MaterialApp(home: SignalExplorerPage(sampleClient: client)),
+    );
+    await tester.pumpAndSettle();
+    final checkButton = find.byKey(const ValueKey<String>('check-sample'));
+    await tester.scrollUntilVisible(
+      checkButton,
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(checkButton);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('sample-result')), findsOneWidget);
+
+    await tester.tap(checkButton);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('sample-result')), findsNothing);
+    expect(client.submittedKitSnapshots[0].$1, isTrue);
+    expect(client.submittedKitSnapshots[0].$2, <String>['externalDisplay']);
+    expect(client.submittedKitSnapshots[1].$1, isFalse);
+    expect(client.submittedKitSnapshots[1].$2, isEmpty);
   });
 }

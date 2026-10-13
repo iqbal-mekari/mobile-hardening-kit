@@ -164,6 +164,8 @@ Android applies `FLAG_SECURE` to the attached Flutter activity window (so it aff
 
 `example/` holds one sample per integration style: `example/flutter` (Flutter app), `example/android` (native Android), and `example/ios` (native iOS, SPM). The Flutter app runs a scan, displays current findings, subscribes to display/capture events, and toggles the opt-in protection helper. Run it on an Android or iOS device/simulator with `cd example/flutter && flutter run`.
 
+The [Flutter sample](example/flutter/README.md) also demonstrates kit observations alongside independently verified Android Play Integrity verdicts and sample-owned decision policies. Its [Go verification backend](example/play_integrity_server/README.md) keeps Google credentials server-side. This integration lives entirely in the examples; Play Integrity is not a kit dependency or an offline root detector.
+
 ## Testing signal triggers
 
 ### Prepare instrumentation test tools

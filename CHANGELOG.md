@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- The Flutter sample demonstrates local kit findings alongside independently server-verified Google Play Integrity verdicts, with sample-owned OR, AND, and source-precedence decision policies. The Play SDK dependency is confined to the sample Android app; the kit API and dependencies are unchanged.
+- A Go sample verification backend validates Play tokens, request binding, package identity, and freshness using server-only Application Default Credentials. Its behavior tests run in CI; setup and trust limitations are documented in the sample READMEs.
+
 ### Changed
 - The native Android sample (`example/android`) now consumes the released 0.2.0 AAR from the GitHub Release assets (anonymous, via the attached Gradle module metadata), and the native iOS sample (`example/ios`) consumes the tagged 0.2.0 sources through a remote SPM reference, instead of building the library from the working tree.
 
