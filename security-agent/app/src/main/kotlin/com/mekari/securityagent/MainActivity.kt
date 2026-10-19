@@ -31,11 +31,20 @@ class MainActivity : Activity() {
     private lateinit var steps: EditText
     private lateinit var cloudConsent: CheckBox
     private lateinit var screenshotConsent: CheckBox
+    private lateinit var providerSpinner: Spinner
+    private lateinit var modelSpinner: Spinner
+    private lateinit var advisoryConsent: CheckBox
+    private lateinit var advisoryEndpoint: EditText
+    private var fetchingModels = false
+    private var pendingLogSessionId: String? = null
     private lateinit var readiness: TextView
     private lateinit var progress: TextView
     private lateinit var report: TextView
     private lateinit var scroll: ScrollView
     private val picker = 731
+    private val openAiDefaultEndpoint = "https://api.openai.com/v1/chat/completions"
+    private val anthropicDefaultEndpoint = "https://api.anthropic.com/v1/messages"
+    private val modelPlaceholder = "Select a fetched model…"
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var polling = false
 
@@ -78,8 +87,32 @@ class MainActivity : Activity() {
         root.addView(fieldLabel("Manual package entry is allowed; choose only an authorized staging target."))
         root.addView(section("Staging network scope"))
         hosts = addField(root, "Exact allowed hostnames", field("Exact allowed hostnames", "staging.example.test"))
-        endpoint = addField(root, "OpenAI-compatible HTTPS endpoint", field("OpenAI-compatible HTTPS endpoint", "https://api.example.test/v1/chat/completions"))
+        root.addView(label("Model provider", 14, 0xff334155.toInt(), true))
+        providerSpinner = Spinner(this).apply {
+            minimumHeight = dp(48); contentDescription = "Model provider"
+            background = rounded(0xffffffff.toInt(), 0xffcbd5e1.toInt())
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("OpenAI-compatible", "Anthropic"))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { onProviderChanged(position == 1) }
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
+        }
+        root.addView(providerSpinner, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        endpoint = addField(root, "Model HTTPS endpoint", field("Model HTTPS endpoint", openAiDefaultEndpoint))
         model = addField(root, "Model name", field("Model name", ""))
+        root.addView(button("Fetch models") { fetchModels() })
+        modelSpinner = Spinner(this).apply {
+            minimumHeight = dp(48); contentDescription = "Fetched models"; visibility = View.GONE
+            background = rounded(0xffffffff.toInt(), 0xffcbd5e1.toInt())
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    val chosen = parent?.getItemAtPosition(position)?.toString() ?: return
+                    if (position > 0 && chosen != modelPlaceholder) model.setText(chosen)
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
+        }
+        root.addView(modelSpinner, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         root.addView(section("Cloud and test credentials"))
         apiKey = addField(root, "Cloud API key (encrypted on this device)", secretField("Cloud API key (saved encrypted on this device)"))
         username = addField(root, "Staging username (encrypted on this device)", secretField("Staging username (saved encrypted on this device)"))
@@ -87,7 +120,9 @@ class MainActivity : Activity() {
         steps = addField(root, "Maximum assessment steps (1–100)", field("Maximum assessment steps (1–100)", "40", android.text.InputType.TYPE_CLASS_NUMBER))
         cloudConsent = CheckBox(this).apply { text = "Allow sanitized text observations to be sent to this endpoint"; setTextColor(0xff10243a.toInt()); minHeight = dp(48) }
         screenshotConsent = CheckBox(this).apply { text = "Allow screenshots to be sent (only when no password nodes are present)"; setTextColor(0xff10243a.toInt()); minHeight = dp(48) }
-        root.addView(cloudConsent); root.addView(screenshotConsent)
+        advisoryConsent = CheckBox(this).apply { text = "Enable live mobile-security advisory fetch (adds controller egress to the advisory host)"; setTextColor(0xff10243a.toInt()); minHeight = dp(48) }
+        root.addView(cloudConsent); root.addView(screenshotConsent); root.addView(advisoryConsent)
+        advisoryEndpoint = addField(root, "Advisory feed HTTPS URL (only used when live advisory fetch is enabled)", field("Advisory feed HTTPS URL", "https://advisories.example.test/feed", android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI))
         root.addView(fieldLabel("No API key or test credential is sent to reports. Never use production accounts."))
         root.addView(button("Save configuration") { saveConfiguration(false) })
         root.addView(section("Assessment session"))
@@ -100,6 +135,8 @@ class MainActivity : Activity() {
         root.addView(controls)
         root.addView(button("View retained screenshot evidence") { viewEvidence() })
         root.addView(button("Export Markdown report") { exportReport() })
+        root.addView(button("View session log") { viewLog() })
+        root.addView(button("Export session log") { exportLog() })
         report = label("Findings and collector coverage will appear here.", 14, 0xff334155.toInt(), false).apply { setTextIsSelectable(true) }
         root.addView(report)
     }
@@ -150,17 +187,60 @@ class MainActivity : Activity() {
     }
     private fun rounded(fill: Int, stroke: Int) = android.graphics.drawable.GradientDrawable().apply { setColor(fill); setStroke(dp(1), stroke); cornerRadius = dp(8).toFloat() }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    private fun populate(c: SessionConfig) { target.setText(c.targetPackage); endpoint.setText(c.endpoint); model.setText(c.model); hosts.setText(c.allowedHosts.joinToString(", ")); steps.setText(c.maxSteps.toString()); cloudConsent.isChecked = c.cloudConsent; screenshotConsent.isChecked = c.screenshotsToCloud }
+    private fun populate(c: SessionConfig) { target.setText(c.targetPackage); endpoint.setText(c.endpoint); model.setText(c.model); hosts.setText(c.allowedHosts.joinToString(", ")); steps.setText(c.maxSteps.toString()); cloudConsent.isChecked = c.cloudConsent; screenshotConsent.isChecked = c.screenshotsToCloud
+        providerSpinner.setSelection(if (c.provider == ModelProvider.ANTHROPIC) 1 else 0)
+        advisoryConsent.isChecked = c.liveAdvisories; advisoryEndpoint.setText(if (c.liveAdvisories) c.advisoryEndpoint else "")
+    }
+    private fun onProviderChanged(anthropic: Boolean) {
+        endpoint.hint = if (anthropic) anthropicDefaultEndpoint else openAiDefaultEndpoint
+        val current = endpoint.text.toString().trim()
+        if (anthropic && (current.isEmpty() || current == openAiDefaultEndpoint)) endpoint.setText(anthropicDefaultEndpoint)
+        else if (!anthropic && current == anthropicDefaultEndpoint) endpoint.setText("")
+    }
+    private fun selectedProvider() = if (providerSpinner.selectedItemPosition == 1) ModelProvider.ANTHROPIC else ModelProvider.OPENAI
 
-    private fun configuration(): SessionConfig {
+    private fun configuration(forDiscovery: Boolean = false): SessionConfig {
         val t = target.text.toString().trim(); require(t.matches(Regex("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+"))) { "Enter a valid installed package name." }
         val e = endpoint.text.toString().trim(); val uri = URI(e); require(uri.scheme == "https" && uri.host != null && uri.userInfo == null) { "The model endpoint must be a valid HTTPS URL without user information." }
-        val m = model.text.toString().trim(); require(m.isNotEmpty() && m.length <= 128) { "Enter the model name." }
+        val m = model.text.toString().trim().let { if (forDiscovery && it.isEmpty()) "model-discovery" else it }; require(m.isNotEmpty() && m.length <= 128) { "Enter the model name." }
         val hs = hosts.text.toString().split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
         require(hs.isNotEmpty() && hs.size <= 32 && hs.all(::isExactHost)) { "Enter exact DNS hostnames or IP literals; wildcards, URLs and user information are not allowed." }
         val max = steps.text.toString().toIntOrNull() ?: 0; require(max in 1..100) { "Maximum steps must be between 1 and 100." }
-        require(cloudConsent.isChecked) { "Consent to sanitized cloud text observations before starting." }
-        return SessionConfig(t, e, m, hs, max, screenshotConsent.isChecked, cloudConsent.isChecked)
+        require(forDiscovery || cloudConsent.isChecked) { "Consent to sanitized cloud text observations before starting." }
+        val advisories = advisoryConsent.isChecked
+        val advisoryUrl = if (advisories) advisoryEndpoint.text.toString().trim() else ""
+        if (advisories) {
+            val au = runCatching { URI(advisoryUrl) }.getOrNull()
+            require(advisoryUrl.isNotEmpty() && au != null && au.scheme == "https" && au.host != null && au.userInfo == null && au.fragment == null) { "Enter a valid HTTPS advisory feed URL (no user information or fragment), or disable live advisory fetch." }
+        }
+        return SessionConfig(t, e, m, hs, max, screenshotConsent.isChecked, cloudConsent.isChecked, selectedProvider(), advisories, advisoryUrl)
+    }
+    private fun fetchModels() {
+        if (fetchingModels) return
+        val config: SessionConfig
+        val key: String
+        try {
+            config = configuration(forDiscovery = true)
+            ActionPolicy.validateConfig(config)?.let { throw IllegalArgumentException(it) }
+            key = apiKey.text.toString().trim().ifEmpty { repo.getSecret("cloud_api_key").orEmpty().trim() }
+            require(key.isNotEmpty()) { "Enter a cloud API key (or save one) before fetching models." }
+        } catch (e: Exception) { error("Cannot fetch models", e.message ?: "Check the configuration."); return }
+        fetchingModels = true
+        Toast.makeText(this, "Fetching models…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val result = runCatching { CloudModelClient().listModels(config, key) }
+            runOnUiThread {
+                fetchingModels = false
+                result.fold({ ids ->
+                    val clean = ids.map { it.trim() }.filter { it.isNotEmpty() && it.length <= 128 }.distinct().take(500)
+                    if (clean.isEmpty()) error("No models returned", "The endpoint returned no model ids. Enter the model name manually.")
+                    else {
+                        modelSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf(modelPlaceholder) + clean)
+                        modelSpinner.setSelection(0); modelSpinner.visibility = View.VISIBLE
+                    }
+                }, { error("Model fetch failed", it.message ?: "The model list could not be retrieved.") })
+            }
+        }.start()
     }
     private fun isExactHost(host: String): Boolean {
         if (host.isEmpty() || host.length > 253 || host.any { it.isWhitespace() || it == '*' || it == '/' || it == '@' }) return false
@@ -212,6 +292,7 @@ class MainActivity : Activity() {
     @Deprecated("Android document result") override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == picker + 1) { writeReport(requestCode, resultCode, data); return }
+        if (requestCode == picker + 2) { writeLog(resultCode, data); return }
         if (requestCode == picker && resultCode == RESULT_OK) {
             val uri: Uri = data?.data ?: return
             try { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
@@ -360,6 +441,29 @@ class MainActivity : Activity() {
 
     private fun exportReport() { try { val r = repo.latestSession() ?: throw IllegalStateException("No saved report is available yet."); val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/markdown").putExtra(Intent.EXTRA_TITLE, "security-assessment-${r.id}.md").addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(intent, picker + 1) } catch (e: Exception) { error("Export unavailable", e.message ?: "No report is available.") } }
     private fun writeReport(requestCode: Int, resultCode: Int, data: Intent?) { if (requestCode != picker + 1 || resultCode != RESULT_OK || data?.data == null) return; try { val r = repo.latestSession() ?: error("No report is available."); contentResolver.openOutputStream(data.data!!)?.use { out -> OutputStreamWriter(out, Charsets.UTF_8).use { it.write(repo.report(r)) } } ?: error("The document provider did not open the selected file."); Toast.makeText(this, "Markdown report exported.", Toast.LENGTH_LONG).show() } catch (e: Exception) { error("Export failed", e.message ?: "The report could not be written.") } }
+    private fun latestSessionId(): String = repo.latestSession()?.id ?: throw IllegalStateException("No assessment session exists yet, so there is no session log.")
+    private fun viewLog() {
+        try {
+            val text = repo.exportLog(latestSessionId())
+            val body = TextView(this).apply { this.text = text; textSize = 12f; setTextColor(0xff10243a.toInt()); setTextIsSelectable(true); typeface = android.graphics.Typeface.MONOSPACE; setPadding(dp(16), dp(8), dp(16), dp(8)) }
+            AlertDialog.Builder(this).setTitle("Session log").setView(ScrollView(this).apply { addView(body) }).setPositiveButton("Close", null).show()
+        } catch (e: Exception) { error("Log unavailable", e.message ?: "The session log could not be read.") }
+    }
+    private fun exportLog() {
+        try {
+            val id = latestSessionId(); pendingLogSessionId = id
+            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/markdown").putExtra(Intent.EXTRA_TITLE, "security-assessment-log-$id.md").addCategory(Intent.CATEGORY_OPENABLE), picker + 2)
+        } catch (e: Exception) { error("Export unavailable", e.message ?: "No session log is available.") }
+    }
+    private fun writeLog(resultCode: Int, data: Intent?) {
+        val id = pendingLogSessionId; pendingLogSessionId = null
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null || id == null) return
+        try {
+            contentResolver.openOutputStream(uri)?.use { out -> OutputStreamWriter(out, Charsets.UTF_8).use { it.write(repo.exportLog(id)) } } ?: throw IllegalStateException("The document provider did not open the selected file.")
+            Toast.makeText(this, "Session log exported.", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) { error("Export failed", e.message ?: "The session log could not be written.") }
+    }
     private fun error(title: String, message: String) { AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK", null).show() }
     override fun onResume() { super.onResume(); refresh(); if (AgentService.isRunning) startPolling() }
     override fun onStop() { polling = false; handler.removeCallbacks(pollTask); super.onStop() }

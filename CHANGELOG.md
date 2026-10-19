@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 - Added a standalone rooted-device Android staging security assessment app under `security-agent/`; it is separate from the hardening kit API and detectors.
+- security-agent: multi-provider cloud reasoning (OpenAI-compatible and Anthropic Messages API over raw HTTPS, no SDK), in-app model-list discovery and local selection, an OWASP MASVS v2 / MASTG assessment methodology in the system prompt (no fabricated control IDs), an optional per-session live-advisory fetch (controller-side egress, outside the target-UID firewall, sanitized and treated as untrusted reference), and a verbose, sanitized, exportable per-session process log that records model request/response payloads.
 - The Flutter sample demonstrates local kit findings alongside independently server-verified Google Play Integrity verdicts, with sample-owned OR, AND, and source-precedence decision policies. The Play SDK dependency is confined to the sample Android app; the kit API and dependencies are unchanged.
 - A Go sample verification backend validates Play tokens, request binding, package identity, and freshness using server-only Application Default Credentials. Its behavior tests run in CI; setup and trust limitations are documented in the sample READMEs.
 
