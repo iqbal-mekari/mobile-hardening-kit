@@ -14,12 +14,16 @@ class SessionController(private val repository: SessionStore, private val device
     fun run(sessionId: String, onUpdate: (SessionRecord) -> Unit = {}) {
         synchronized(lock) {
             if (!stop.get() && !pause.get()) client.resetCancellation()
+            // Route the model client's sanitized I/O into this session's verbose log; the repository re-sanitizes.
+            client.attachLogger { event -> runCatching { repository.appendLog(sessionId, event) } }
+            client.provideAdvisories("")
             var record = repository.readSession(sessionId) ?: throw IllegalArgumentException("Assessment session not found")
             if (record.status !in setOf(SessionStatus.READY, SessionStatus.PAUSED, SessionStatus.RUNNING)) throw IllegalStateException("Session cannot run from ${record.status}")
             fun persist(status: SessionStatus, message: String = record.message) {
                 val now = System.currentTimeMillis()
                 record = Redactor.sanitizeRecord(record.copy(status=status, updatedAt=now, message=message), secrets())
                 repository.saveSession(record)
+                runCatching { repository.appendLog(sessionId, LogEvent(now, "INFO", "lifecycle", "[${status.name}] $message")) }
                 onUpdate(record)
             }
             fun finalSweep() {
@@ -45,6 +49,15 @@ class SessionController(private val repository: SessionStore, private val device
                 val key = repository.getSecret("cloud_api_key") ?: throw IllegalStateException("Cloud API key is not configured")
                 checkInterruption()?.let { persist(it.first, it.second); return }
                 persist(SessionStatus.RUNNING, "Preparing target")
+                if (record.config.liveAdvisories && record.config.advisoryEndpoint.isNotBlank()) {
+                    runCatching { AdvisoryFetcher.fetch(record.config.advisoryEndpoint) }
+                        .onSuccess { raw ->
+                            val safe = Redactor.redact(raw, secrets())
+                            client.provideAdvisories(safe)
+                            persist(SessionStatus.RUNNING, "Live advisories fetched (${safe.length} chars; untrusted external reference)")
+                        }
+                        .onFailure { persist(SessionStatus.RUNNING, "Live advisory fetch failed; continuing without external reference: ${Redactor.redact(it.message ?: "unknown error", secrets())}") }
+                }
                 checkInterruption()?.let { persist(it.first, it.second); return }
                 cleanupRequired = true
                 val readiness = device.prepare(record.config)

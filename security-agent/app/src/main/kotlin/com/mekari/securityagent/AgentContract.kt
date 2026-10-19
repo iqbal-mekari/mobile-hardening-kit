@@ -64,6 +64,8 @@ data class Finding(
     val phase: String = "baseline"
 )
 data class CheckResult(val checkId: String, val status: String, val summary: String, val findings: List<Finding> = emptyList(), val artifacts: List<String> = emptyList())
+/** One sanitized, timestamped line in a session's verbose process log. */
+data class LogEvent(val at: Long, val level: String, val category: String, val message: String)
 data class StepRecord(val index: Int, val at: Long, val action: AgentAction, val packageName: String, val outcome: String, val success: Boolean)
 data class SessionRecord(
     val id: String,
@@ -93,10 +95,14 @@ interface ModelClient {
     fun listModels(config: SessionConfig, apiKey: String): List<String> = emptyList()
     /** Supply sanitized, untrusted live-advisory reference text for subsequent next() calls. No-op by default. */
     fun provideAdvisories(text: String) {}
+    /** Attach a sink that receives sanitized model request/response log events. No-op by default. */
+    fun attachLogger(sink: (LogEvent) -> Unit) {}
 }
 interface SessionStore {
     fun getSecret(id: String): String?
     fun saveSession(record: SessionRecord)
     fun readSession(id: String): SessionRecord?
+    /** Append one sanitized line to the session's verbose log. No-op by default so in-memory test stores need not persist logs. */
+    fun appendLog(sessionId: String, event: LogEvent) {}
 }
 internal fun newSessionId(): String = UUID.randomUUID().toString()

@@ -141,6 +141,11 @@ class AssessmentSmokeTest {
             assertTrue("Synthetic password leaked into the report", !markdown.contains(SmokeTargetActivity.TEST_PASSWORD))
             val persisted = java.io.File(context.filesDir, "assessment/sessions/${session.id}.json").readText()
             assertTrue("Secret leaked into persisted session data", listOf("TEST-ONLY-NOT-A-REAL-KEY", SmokeTargetActivity.TEST_USERNAME, SmokeTargetActivity.TEST_PASSWORD).none(persisted::contains))
+            val logEntries = repository.readLog(session.id)
+            assertTrue("Session log captured no entries", logEntries.isNotEmpty())
+            assertTrue("Session log missing lifecycle completion entry", logEntries.any { it.category == "lifecycle" && it.message.contains("COMPLETED") })
+            val logExport = repository.exportLog(session.id)
+            assertTrue("Secret leaked into exported session log", listOf("TEST-ONLY-NOT-A-REAL-KEY", SmokeTargetActivity.TEST_USERNAME, SmokeTargetActivity.TEST_PASSWORD).none(logExport::contains))
         } finally {
             secretFiles.forEach { (id, previous) ->
                 val file = java.io.File(context.filesDir, "assessment/$id.enc")

@@ -12,12 +12,16 @@ class CloudModelClient : ModelClient {
     private val active = AtomicReference<HttpURLConnection?>(null)
     private val cancelledBeforeRegistration = AtomicBoolean(false)
     @Volatile private var advisories: String = ""
+    @Volatile private var logSink: ((LogEvent) -> Unit)? = null
 
     override fun cancel() {
         if (active.getAndSet(null)?.also { it.disconnect() } == null) cancelledBeforeRegistration.set(true)
     }
     override fun resetCancellation() { cancelledBeforeRegistration.set(false) }
     override fun provideAdvisories(text: String) { advisories = text.take(MAX_ADVISORY_CHARS) }
+    override fun attachLogger(sink: (LogEvent) -> Unit) { logSink = sink }
+    // The sink re-sanitizes with the full secret set, so emitting apiKey-redacted payloads here is safe.
+    private fun log(category: String, message: String) { logSink?.invoke(LogEvent(System.currentTimeMillis(), "MODEL", category, message.take(MODEL_LOG_CHARS))) }
 
     override fun next(config: SessionConfig, observation: Observation, history: List<StepRecord>, findings: List<Finding>, apiKey: String): AgentAction {
         require(config.cloudConsent) { "Cloud disclosure consent is required" }
@@ -37,6 +41,7 @@ class CloudModelClient : ModelClient {
                 ModelProvider.OPENAI -> openAiRequestBody(config, userText, image)
                 ModelProvider.ANTHROPIC -> anthropicRequestBody(config, userText, image)
             }
+            log("model-request", "provider=${config.provider.name} model=${config.model} imageAttached=${image != null} prompt=$userText")
             connection.outputStream.use { out -> out.write(body.toByteArray(Charsets.UTF_8)) }
             val code = connection.responseCode
             if (code !in 200..299) throw IllegalStateException("Cloud service returned HTTP $code")
@@ -45,6 +50,7 @@ class CloudModelClient : ModelClient {
                 ModelProvider.OPENAI -> parseOpenAiContent(bytes)
                 ModelProvider.ANTHROPIC -> parseAnthropicContent(bytes)
             }
+            log("model-response", "content=$content")
             return decodeAction(content)
         } catch (e: Exception) {
             if (e is InterruptedException) Thread.currentThread().interrupt()
@@ -220,6 +226,7 @@ class CloudModelClient : ModelClient {
         private const val MAX_IMAGE_PIXELS = 4_000_000L
         private const val MAX_MODELS = 500
         private const val MAX_ADVISORY_CHARS = 8_000
+        private const val MODEL_LOG_CHARS = 6_000
         private const val ANTHROPIC_VERSION = "2023-06-01"
         private const val ANTHROPIC_MAX_TOKENS = 1024
 

@@ -9,6 +9,7 @@ import java.io.FileOutputStream
 class AgentRepository(private val context: Context) : SessionStore {
     private val base = File(context.filesDir, "assessment").apply { mkdirs() }
     private val sessions = File(base, "sessions").apply { mkdirs() }
+    private val logs = File(base, "logs").apply { mkdirs() }
     private val configFile = File(base, "config.json")
     private val vault = SecretVault(base)
 
@@ -47,6 +48,32 @@ class AgentRepository(private val context: Context) : SessionStore {
     }
     fun report(record: SessionRecord): String = ReportRenderer.render(Redactor.sanitizeRecord(record, secretValues()))
 
+    @Synchronized override fun appendLog(sessionId: String, event: LogEvent) {
+        require(sessionId.matches(Regex("[A-Za-z0-9-]{1,64}"))) { "Invalid assessment session ID" }
+        val file = File(logs, "$sessionId.jsonl")
+        if (file.length() >= MAX_LOG_BYTES) return // append-only cap; existing log is preserved, further lines dropped silently
+        val sanitized = Redactor.redact(event.message, secretValues())
+        val line = JSONObject().put("at", event.at).put("level", event.level.take(16)).put("category", event.category.take(32)).put("message", sanitized.take(MAX_LOG_LINE_CHARS)).toString()
+        FileOutputStream(file, true).use { it.write((line + "\n").toByteArray(Charsets.UTF_8)); it.fd.sync() }
+    }
+    @Synchronized fun readLog(sessionId: String): List<LogEvent> {
+        require(sessionId.matches(Regex("[A-Za-z0-9-]{1,64}")))
+        val file = File(logs, "$sessionId.jsonl"); if (!file.exists()) return emptyList()
+        return file.readLines().mapNotNull { raw ->
+            runCatching { JSONObject(raw).let { LogEvent(it.getLong("at"), it.getString("level"), it.getString("category"), it.getString("message")) } }.getOrNull()
+        }.take(MAX_LOG_LINES)
+    }
+    fun exportLog(sessionId: String): String {
+        val entries = readLog(sessionId)
+        if (entries.isEmpty()) return "# Session log $sessionId\n\nNo log entries were recorded."
+        return buildString {
+            appendLine("# Session log $sessionId"); appendLine()
+            appendLine("Verbose, sanitized per-session process log. Secret values are redacted; model request/response payloads are shown as sent to and received from the provider after sanitization.")
+            appendLine()
+            entries.forEach { e -> appendLine("- `${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(e.at))}` [${e.level}/${e.category}] ${e.message.replace("\n", " ").replace("`", "'")}") }
+        }
+    }
+
     private fun secretValues() = listOf("cloud_api_key", "username", "password").mapNotNull { vault.get(it) }
     private fun atomicWrite(target: File, value: String) {
         val temp = File.createTempFile("security-agent-", ".tmp", target.parentFile)
@@ -75,5 +102,10 @@ class AgentRepository(private val context: Context) : SessionStore {
     private fun parseCheck(o: JSONObject)=CheckResult(o.getString("checkId"),o.getString("status"),o.getString("summary"),array(o,"findings"){parseFinding(it)},strings(o,"artifacts"))
     private fun <T> array(o: JSONObject,key:String,convert:(JSONObject)->T):List<T> { val a=o.getJSONArray(key); require(a.length()<=100_000); return (0 until a.length()).map { convert(a.getJSONObject(it)) } }
     private fun strings(o: JSONObject,key:String):List<String>{val a=o.getJSONArray(key);require(a.length()<=100_000);return (0 until a.length()).map{a.getString(it)}}
-    private companion object { const val MAX_RECORD_BYTES = 32 * 1024 * 1024 }
+    private companion object {
+        const val MAX_RECORD_BYTES = 32 * 1024 * 1024
+        const val MAX_LOG_BYTES = 8L * 1024 * 1024
+        const val MAX_LOG_LINE_CHARS = 8_000
+        const val MAX_LOG_LINES = 50_000
+    }
 }
