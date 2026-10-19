@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Security Assessment</string>
+    <string name="accessibility_description">Inspect and control the selected staging application during an authorized assessment.</string>
+    <string name="notification_channel">Assessment session</string>
+</resources>

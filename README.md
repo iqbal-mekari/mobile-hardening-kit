@@ -2,6 +2,10 @@
 
 A dependency-light library that collects heuristic client-side integrity and display signals through in-house Kotlin and Swift cores. It can be used directly from native Android and iOS apps, or through the Flutter plugin, which is a thin wrapper over the same native cores. **The kit reports signals; it never blocks a user flow or makes a product risk decision.** Client-side checks are bypassable and are not a security boundary.
 
+## Standalone Android security assessment app
+
+[`security-agent/`](security-agent/README.md) is a separate rooted-device staging assessment application; it is not part of the Flutter/native hardening library or a new plugin detector.
+
 ## Requirements
 
 - Flutter 3.24.0 or later
