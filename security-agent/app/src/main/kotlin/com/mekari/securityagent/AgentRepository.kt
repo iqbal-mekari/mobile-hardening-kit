@@ -57,9 +57,11 @@ class AgentRepository(private val context: Context) : SessionStore {
         require(id.matches(Regex("[A-Za-z0-9-]{1,64}"))) { "Invalid assessment session ID" }
         return File(sessions, "$id.json")
     }
-    private fun configJson(c: SessionConfig) = JSONObject().put("targetPackage", c.targetPackage).put("endpoint", c.endpoint).put("model", c.model).put("allowedHosts", JSONArray(c.allowedHosts)).put("maxSteps", c.maxSteps).put("screenshotsToCloud", c.screenshotsToCloud).put("cloudConsent", c.cloudConsent)
+    private fun configJson(c: SessionConfig) = JSONObject().put("targetPackage", c.targetPackage).put("endpoint", c.endpoint).put("model", c.model).put("allowedHosts", JSONArray(c.allowedHosts)).put("maxSteps", c.maxSteps).put("screenshotsToCloud", c.screenshotsToCloud).put("cloudConsent", c.cloudConsent).put("provider", c.provider.name).put("liveAdvisories", c.liveAdvisories).put("advisoryEndpoint", c.advisoryEndpoint)
     private fun parseConfig(o: JSONObject): SessionConfig {
-        val config = SessionConfig(o.getString("targetPackage"), o.getString("endpoint"), o.getString("model"), o.getJSONArray("allowedHosts").let { a -> (0 until a.length()).map { a.getString(it) } }, o.getInt("maxSteps"), o.getBoolean("screenshotsToCloud"), o.getBoolean("cloudConsent"))
+        // provider/liveAdvisories/advisoryEndpoint read tolerantly so configs written before they existed still load.
+        val provider = runCatching { ModelProvider.valueOf(o.optString("provider", ModelProvider.OPENAI.name)) }.getOrDefault(ModelProvider.OPENAI)
+        val config = SessionConfig(o.getString("targetPackage"), o.getString("endpoint"), o.getString("model"), o.getJSONArray("allowedHosts").let { a -> (0 until a.length()).map { a.getString(it) } }, o.getInt("maxSteps"), o.getBoolean("screenshotsToCloud"), o.getBoolean("cloudConsent"), provider, o.optBoolean("liveAdvisories", false), o.optString("advisoryEndpoint", ""))
         ActionPolicy.validateConfig(config)?.let { throw IllegalArgumentException(it) }
         return config
     }

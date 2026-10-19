@@ -6,7 +6,8 @@ import org.json.JSONObject
 /** Validates persisted values before repository decoding or state reuse. */
 internal object PersistedRecordValidator {
     private val fields = setOf("id", "config", "status", "startedAt", "updatedAt", "message", "steps", "checks", "findings", "visitedScreens")
-    private val configFields = setOf("targetPackage", "endpoint", "model", "allowedHosts", "maxSteps", "screenshotsToCloud", "cloudConsent")
+    private val requiredConfigFields = setOf("targetPackage", "endpoint", "model", "allowedHosts", "maxSteps", "screenshotsToCloud", "cloudConsent")
+    private val optionalConfigFields = setOf("provider", "liveAdvisories", "advisoryEndpoint")
     private val findingFields = setOf("id", "title", "severity", "confidence", "evidence", "attackerPrerequisite", "remediation", "phase")
     private val actionFields = setOf("kind", "nodeId", "text", "credentialId", "direction", "checkId", "reason")
 
@@ -27,13 +28,18 @@ internal object PersistedRecordValidator {
     }
 
     private fun validateConfig(config: JSONObject) {
-        require(config.keys().asSequence().toSet() == configFields) { "Saved configuration has missing or unknown fields" }
+        // Required keys must all be present; any other key must be a known optional one (unknown keys still rejected as tampering).
+        val keys = config.keys().asSequence().toSet()
+        require(keys.containsAll(requiredConfigFields) && (keys - requiredConfigFields).all { it in optionalConfigFields }) { "Saved configuration has missing or unknown fields" }
         config.string("targetPackage"); config.string("endpoint"); config.string("model")
         val hosts = config.array("allowedHosts")
         require(hosts.length() in 1..64)
         for (index in 0 until hosts.length()) require(hosts.get(index) is String) { "Allowed host is malformed" }
         require(config.number("maxSteps") in 1L..200L)
         config.boolean("screenshotsToCloud"); config.boolean("cloudConsent")
+        if (config.has("provider")) ModelProvider.valueOf(config.string("provider"))
+        if (config.has("liveAdvisories")) config.boolean("liveAdvisories")
+        if (config.has("advisoryEndpoint")) config.string("advisoryEndpoint")
     }
 
     private fun validateSteps(steps: JSONArray) {

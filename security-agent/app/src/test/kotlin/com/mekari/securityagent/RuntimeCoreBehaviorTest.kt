@@ -8,6 +8,21 @@ class RuntimeCoreBehaviorTest {
     private val config = SessionConfig("com.example.target","https://api.example.test/v1/chat/completions","chosen-model",listOf("staging.example.test"),cloudConsent=true)
     private val fresh = Observation(config.targetPackage,listOf(UiNode("btn",packageName=config.targetPackage,clickable=true),UiNode("pw",packageName=config.targetPackage,editable=true,password=true)),System.currentTimeMillis())
 
+    @Test fun liveAdvisoryEndpointIsValidatedAgainstTheToggle() {
+        assertNull(ActionPolicy.validateConfig(config.copy(liveAdvisories = true, advisoryEndpoint = "https://feeds.example.test/mobile?since=2026")))
+        assertNotNull(ActionPolicy.validateConfig(config.copy(liveAdvisories = true, advisoryEndpoint = "http://feeds.example.test/mobile")))
+        assertNotNull(ActionPolicy.validateConfig(config.copy(liveAdvisories = true, advisoryEndpoint = "")))
+        assertNotNull(ActionPolicy.validateConfig(config.copy(liveAdvisories = false, advisoryEndpoint = "https://feeds.example.test/mobile")))
+        assertNull(ActionPolicy.validateConfig(config.copy(liveAdvisories = false, advisoryEndpoint = "")))
+    }
+    @Test fun persistedValidatorToleratesNewOptionalConfigKeysButRejectsUnknown() {
+        fun configJson() = JSONObject().put("targetPackage","com.example.target").put("endpoint","https://api.example.test/v1/chat/completions").put("model","m").put("allowedHosts",org.json.JSONArray(listOf("staging.example.test"))).put("maxSteps",10).put("screenshotsToCloud",false).put("cloudConsent",true)
+        fun record(cfg: JSONObject) = JSONObject().put("id","s").put("config",cfg).put("status","READY").put("startedAt",1L).put("updatedAt",1L).put("message","m").put("steps",org.json.JSONArray()).put("checks",org.json.JSONArray()).put("findings",org.json.JSONArray()).put("visitedScreens",org.json.JSONArray()).toString()
+        PersistedRecordValidator.validate(record(configJson()), "s") // legacy config without the new keys
+        PersistedRecordValidator.validate(record(configJson().put("provider","ANTHROPIC").put("liveAdvisories",true).put("advisoryEndpoint","https://f.example.test/a")), "s")
+        try { PersistedRecordValidator.validate(record(configJson().put("unexpected","x")), "s"); fail("accepted unknown key") } catch (_: Exception) {}
+        try { PersistedRecordValidator.validate(record(configJson().put("provider","NOT_A_PROVIDER")), "s"); fail("accepted bad provider") } catch (_: Exception) {}
+    }
     @Test fun rejectsWrongPackageStaleAndOutOfScopeNodes() {
         assertFalse(ActionPolicy.validate(AgentAction(ActionKind.TAP,"btn"),fresh.copy(packageName="other.app"),config).accepted)
         assertFalse(ActionPolicy.validate(AgentAction(ActionKind.TAP,"btn"),fresh.copy(capturedAt=0),config).accepted)

@@ -40,6 +40,14 @@ object ActionPolicy {
         if (config.targetPackage.isBlank() || config.targetPackage.length > 255) return "Target package is invalid"
         if (config.model.isBlank() || config.model.length > 128 || config.maxSteps !in 1..200) return "Model or step limit is invalid"
         if (config.allowedHosts.isEmpty() || config.allowedHosts.size > 64 || config.allowedHosts.any { it.isBlank() || it.length > 253 || it.contains('*') || it.contains('/') || it.contains('@') }) return "Allowed hosts must be exact hostnames"
+        if (config.liveAdvisories) {
+            if (config.advisoryEndpoint.length > 2048) return "Advisory endpoint is too long"
+            val advisory = runCatching { URI(config.advisoryEndpoint) }.getOrNull() ?: return "Advisory endpoint is invalid"
+            // A feed may legitimately carry query parameters, unlike the model endpoint; userinfo and fragments are still rejected.
+            if (advisory.scheme != "https" || advisory.host.isNullOrBlank() || advisory.userInfo != null || advisory.fragment != null) return "Advisory endpoint must be an HTTPS URI without user information or fragment"
+        } else if (config.advisoryEndpoint.isNotEmpty()) {
+            return "Advisory endpoint must be empty when live advisories are disabled"
+        }
         return null
     }
 }

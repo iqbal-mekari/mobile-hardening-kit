@@ -5,6 +5,9 @@ import java.util.UUID
 enum class SessionStatus { READY, RUNNING, PAUSED, COMPLETED, FAILED, STOPPED }
 enum class ActionKind { TAP, TYPE_TEXT, ENTER_CREDENTIAL, SCROLL, BACK, WAIT, RUN_CHECK, REPORT_HYPOTHESIS, FINISH, REQUEST_HELP }
 
+/** Wire protocol for the cloud reasoning model. OPENAI covers any OpenAI-compatible chat-completions endpoint. */
+enum class ModelProvider { OPENAI, ANTHROPIC }
+
 data class SessionConfig(
     val targetPackage: String,
     val endpoint: String,
@@ -12,7 +15,11 @@ data class SessionConfig(
     val allowedHosts: List<String>,
     val maxSteps: Int = 40,
     val screenshotsToCloud: Boolean = false,
-    val cloudConsent: Boolean = false
+    val cloudConsent: Boolean = false,
+    // Appended last with defaults so existing positional construction sites remain valid.
+    val provider: ModelProvider = ModelProvider.OPENAI,
+    val liveAdvisories: Boolean = false,
+    val advisoryEndpoint: String = ""
 )
 
 data class UiNode(
@@ -82,6 +89,10 @@ interface ModelClient {
     fun next(config: SessionConfig, observation: Observation, history: List<StepRecord>, findings: List<Finding>, apiKey: String): AgentAction
     fun cancel()
     fun resetCancellation() {}
+    /** Fetch the provider's selectable model identifiers. Default empty so test doubles need not implement it. */
+    fun listModels(config: SessionConfig, apiKey: String): List<String> = emptyList()
+    /** Supply sanitized, untrusted live-advisory reference text for subsequent next() calls. No-op by default. */
+    fun provideAdvisories(text: String) {}
 }
 interface SessionStore {
     fun getSecret(id: String): String?
