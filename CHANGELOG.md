@@ -33,7 +33,12 @@ All notable changes to this project are documented here.
 - The Flutter example adopts the UIScene lifecycle, which Xcode 27 builds require, and no longer needs the Podfile deployment-target override (the Flutter 3.47.8 engine pod declares iOS 15.0). Flutter is pinned per project with fvm (`.fvmrc`).
 - The native Android sample (`example/android`) now consumes the released 0.2.0 AAR from the GitHub Release assets (anonymous, via the attached Gradle module metadata), and the native iOS sample (`example/ios`) consumes the tagged 0.2.0 sources through a remote SPM reference, instead of building the library from the working tree.
 - Instrumentation, debugger, and root/jailbreak metadata gains `techniques`, plus new keys: `anonRwxCount` and `artTextSegments` (Android instrumentation, whose `artifacts` may now include `thread:<name>` entries), `tracerPid` (Android debugger), and `mountMarkers` (Android root).
-- The `gadget` map term is narrowed to `frida-gadget`. On iOS, the `substrate` term is narrowed to `mobilesubstrate` and `cydiasubstrate`, and `fridagadget` is added.
+- Instrumentation name matching uses the file name only (last path component), case-insensitively, against specific tokens. Android: `frida-agent`, `frida-gadget`, `libfrida`, `libxposed`, `xposedbridge`, `lsposed`, `libsubstrate`, `libhooker`. iOS: `fridagadget`, `frida-gadget`, `frida-agent`, `libfrida`, `mobilesubstrate`, `cydiasubstrate`, `libsubstitute`, `substitute-loader`, `ellekit`, `libhooker`. Bare `frida`, `substrate`, `gadget`, and `xposed` no longer match, so a library named `frida.so` or `xposed.jar` is not reported, and app paths containing words such as "Friday" no longer cause false positives.
+- Instrumentation `artifacts` contain file names only, never directory paths, on both platforms, at most 8 entries of at most 120 characters. Android memfd entries read like `memfd:frida-agent-64.so`, and thread entries are `thread:<name>`. Root and jailbreak `artifacts` remain fixed system paths from the kit's own lists.
+- The integrity monitor interval is clamped to [5 s, 24 h] in Dart, Android, and iOS.
+- Android: `snapshot()` through the Flutter plugin runs off the platform thread, so it no longer reads `/proc` on the main thread.
+- Android: the integrity monitor starts paused when no activity is attached. The start pass still runs, and the interval begins when an activity is attached or started.
+- Dart: each `integrityEvents()` call returns a stream bound to its own configuration and native session. Listening to it while a different session is active fails that subscription with a `StateError`, in addition to the `StateError` thrown at call time when a different session is already active.
 - The Android Frida listener port probe (`/proc/net/tcp`) runs only on API 28 and below. It is passive: there is no active `connect()` probe and no `INTERNET` permission.
 - Java-side Xposed `Class.forName` probes are removed. Phase 0 showed they do not reveal LSPosed, so the kit makes no LSPosed detection claim.
 - iOS `screenshotTaken` metadata gains `source: userDidTakeScreenshotNotification`; `active` is kept for compatibility.
@@ -44,6 +49,12 @@ All notable changes to this project are documented here.
 
 ### Fixed
 - Dart: a second listener on `stream` re-subscribed the native channel, and cancelling either listener stopped both. All listeners on all kit instances now share one native subscription for `screenEvents` and one for `integrityEvents`.
+- Android: an integrity monitor interval of `Long.MAX_VALUE` caused a busy loop. The interval is now clamped to [5 s, 24 h].
+- Android: the integrity monitor leaked the attached activity when it was destroyed without `detachActivity()`. Destroying the attached activity now pauses the monitor and unbinds it.
+- iOS: image loads that raced dyld callback registration were mislabelled as replayed. A load is now live unless its image was already loaded when observation began.
+
+### Security
+- Gradle wrapper properties pin `distributionSha256Sum` for the Gradle distribution in the native Android core and both Android samples. CI and the release workflow run `gradle/actions/wrapper-validation` to check wrapper checksums.
 
 ## [0.2.0] - 2026-09-30
 

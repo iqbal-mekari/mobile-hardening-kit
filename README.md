@@ -61,6 +61,7 @@ kit.attachActivity(activity)          // onCreate/onStart; pair with detachActiv
 kit.startObserving { signal -> /* HardeningSignal */ }
 // Opt-in integrity monitor: re-checks on a schedule, reports new, changed, or cleared findings.
 kit.startMonitoring(IntegrityMonitorConfig(intervalMs = 30_000), { signal -> /* metadata: change, trigger, techniques */ })
+// Interval is clamped to 5 s to 24 h. Without an attached activity the monitor stays paused after its start pass.
 kit.checkIntegrityNow()                  // optional: one pass now, trigger "manual"
 // Sensitive flow only; every option is opt-in and independent.
 val state = kit.setScreenProtection(
@@ -163,7 +164,7 @@ Screen events and integrity findings are separate streams with separate channels
 ```dart
 final subscription = hardening.integrityEvents(
   const IntegrityMonitorConfig(
-    interval: Duration(seconds: 30), // clamped to at least 5 seconds
+    interval: Duration(seconds: 30), // clamped to 5 seconds to 24 hours
     checkOnResume: true,
   ),
 ).listen((finding) {
@@ -186,7 +187,7 @@ await subscription.cancel();
 
 ### Shared subscription and `StateError`
 
-All listeners, on every kit instance in the process, share one native monitor session. While it has listeners, calling `integrityEvents` with a different `IntegrityMonitorConfig`, or from an instance with a different `expectedSigningCertificateSha256` or `trustedAccessibilityPackages`, throws a `StateError`. After the last listener cancels, a new configuration is allowed. `screenEvents` (and the deprecated `stream`) share one process-wide native subscription the same way: cancelling one listener never stops another.
+All listeners, on every kit instance in the process, share one native monitor session. While it has listeners, calling `integrityEvents` with a different `IntegrityMonitorConfig`, or from an instance with a different `expectedSigningCertificateSha256` or `trustedAccessibilityPackages`, throws a `StateError`. Each stream returned by `integrityEvents` is bound to the session of its own call. Listening to such a stream while a different session is active fails that subscription with a `StateError` (delivered as an error event), and native monitoring does not start for it. After the last listener cancels, a new configuration is allowed. `screenEvents` (and the deprecated `stream`) share one process-wide native subscription the same way: cancelling one listener never stops another.
 
 ### Timing: when each tool can enter the process
 
@@ -205,11 +206,15 @@ Attach timing decides the schedule. Interval passes run only the runtime-attach 
 | --- | --- | --- |
 | `start` | full | on subscribe |
 | `resume` | full | app returns to the foreground (when `checkOnResume` is true) |
-| `interval` | runtime (instrumentation, debugger) | every `interval` while foregrounded; paused while the Android activity is stopped or the iOS app is not active |
+| `interval` | runtime (instrumentation, debugger) | every `interval` (clamped to 5 s to 24 h) while foregrounded; paused while the Android activity is stopped or the iOS app is not active, and on Android until an activity is attached |
 | `imageLoad` (iOS) | runtime (instrumentation) | a matching dyld image loads while subscribed |
 | `manual` | full | `checkIntegrityNow()` |
 
 The full tier runs every `snapshot()` check except `screenCaptureActive` and `externalDisplay`, which belong to `screenEvents` only. A runtime pass never clears findings of other types.
+
+### Cost
+
+Measured on one device (POCO F1, Android 12, debug build, before the regex-hoisting fix; single-device, debug-build numbers, not a general benchmark): a runtime-tier interval pass had a median of about 114 ms (max about 134 ms), and a full pass a median of about 197 ms (max about 260 ms). Both run on a background thread. Keep the 30 s default outside sensitive screens, and shorten the interval only while a sensitive screen is open.
 
 ### Evidence sources (`techniques`)
 
@@ -226,7 +231,7 @@ Every monitor event and every `snapshot()` finding of these types carries `techn
 
 ### Event metadata
 
-Monitor events use the `snapshot()` metadata for their type, plus `change`, `trigger`, and `techniques`. Android `instrumentation` also carries `artifacts` (at most 8 entries of at most 120 characters, including `thread:<name>` entries), `tracerPort` (API 28 and below, otherwise 0), `anonRwxCount`, and `artTextSegments`.
+Monitor events use the `snapshot()` metadata for their type, plus `change`, `trigger`, and `techniques`. Android `instrumentation` also carries `tracerPort` (API 28 and below, otherwise 0), `anonRwxCount`, and `artTextSegments`. `artifacts` on `instrumentation` (both platforms) hold file names only, never directory paths: at most 8 entries of at most 120 characters. Android entries are mapping file names, memfd entries such as `memfd:frida-agent-64.so`, and thread entries `thread:<name>`. iOS entries are lowercased image file names.
 
 ## Limits of the integrity monitor
 
@@ -248,7 +253,7 @@ Client-side checks are bypassable, so decide policy on the server:
 
 ### Data handling
 
-Findings forwarded to a backend may become personal data under UU PDP (Law 27/2022) once they are linked to a user. The kit keeps data minimal: `artifacts` are capped at 8 entries of at most 120 characters each, only paths from the app's own process are reported, and no device identifiers are added. Your privacy and legal owners decide the lawful basis and retention for any link to a user.
+Findings forwarded to a backend may become personal data under UU PDP (Law 27/2022) once they are linked to a user. The kit keeps data minimal: `artifacts` are capped at 8 entries of at most 120 characters each. Instrumentation artifacts are reduced to file names, so install-specific directories and app container IDs are not reported. The `root` and `jailbreak` artifacts are fixed system paths from the kit's own lists. No device identifiers are added. Your privacy and legal owners decide the lawful basis and retention for any link to a user.
 
 ### Untested coverage
 
@@ -262,10 +267,9 @@ These areas have no device or simulator verification yet. They stay listed here 
 | iOS Frida Gadget | load-command / renamed Gadget detection | re-signed build on a physical iPhone |
 | iOS jailbreak tweak runtimes | ElleKit / libhooker / Substitute image names | jailbroken iPhone |
 | iOS `P_TRACED` on device | Xcode attach/detach transitions (simulator lldb attach verified) | physical iPhone |
-| Android `untrusted_app` readability | Phase 0 read app state as root and via `run-as`, not from the app's own domain | confirmed on the POCO F1 during implementation |
 | Android false positives | `memfdExec` / `anonRwx` with WebView or JS engines; `artSegments` on other API levels, ROMs, and other hookers | WebView test app; other devices |
 | Android classic Xposed / EdXposed, Frida Gadget (repackaged APK), Magisk DenyList | no setup on the device | dedicated test setups |
-| Per-pass cost on Android | not measured in Phase 0 | measured on the POCO F1 |
+| Android `trigger: manual` on a real change | observed only without a change (no duplicates) | rerun with a slower interval |
 
 Resolved by Phase 0: `memfdExec` ships with the `jit-cache` name exclusion, and `mountinfo` is in the `root` start and resume tier.
 
@@ -274,7 +278,7 @@ Resolved by Phase 0: `memfdExec` ships with the `jit-cache` name exclusion, and 
 | Signal | Android | iOS |
 | --- | --- | --- |
 | Root / jailbreak | `su`, Magisk/KernelSU paths, test-key build tags, Magisk manager package, and Magisk/Zygisk mount markers in `/proc/self/mountinfo` (`mountinfo`; start and resume passes only) | Common jailbreak files and URL schemes (`paths`, `urlSchemes`); scheme detection requires the app's `LSApplicationQueriesSchemes` allowlist |
-| Instrumentation | Frida: mapping names (`frida-agent`, `frida-gadget`), thread names (`gum-js-loop`, `pool-frida`), and executable private `memfd` mappings (`memfdExec`, `jit-cache` excluded). Supporting only: anonymous RWX count. Low confidence: libart text-segment split (`artSegments`, "ART hooked", verified on API 32 only). Frida TCP listener probe (`port`, API 28 and below only). Substrate and libhooker map terms are low-signal. Xposed/LSPosed name terms are matched but LSPosed detection is not claimed (see [Limits](#limits-of-the-integrity-monitor)). | Loaded-image names: Frida (`frida`, `fridagadget`), Substrate (`mobilesubstrate`, `cydiasubstrate`), Substitute, ElleKit, libhooker, and Xposed indicators; live image-load observer in the monitor (`dyldImageLoad`) |
+| Instrumentation | Name tokens matched against the mapping file name only (case-insensitive): `frida-agent`, `frida-gadget`, `libfrida`, `libxposed`, `xposedbridge`, `lsposed`, `libsubstrate`, `libhooker`. Thread names (`gum-js-loop`, `pool-frida`) and executable private `memfd` mappings (`memfdExec`, `jit-cache` excluded). Supporting only: anonymous RWX count. Low confidence: libart text-segment split (`artSegments`, "ART hooked", verified on API 32 only). Frida TCP listener probe (`port`, API 28 and below only). Substrate and libhooker map terms are low-signal. LSPosed name terms are matched but LSPosed detection is not claimed (see [Limits](#limits-of-the-integrity-monitor)). | Loaded-image file names only (last path component, case-insensitive): `fridagadget`, `frida-gadget`, `frida-agent`, `libfrida`, `mobilesubstrate`, `cydiasubstrate`, `libsubstitute`, `substitute-loader`, `ellekit`, `libhooker`. There are no Xposed terms on iOS. Live image-load observer in the monitor (`dyldImageLoad`) |
 | Debugger | Runtime debugger attachment: JDWP (`jdwp`) and non-zero `TracerPid` (`tracerPid`). `tracerPid` is not a Frida signal: Frida's ptrace is visible only for about 0.2–0.4 s at attach. | `sysctl` traced-process flag `P_TRACED` (`pTraced`); Xcode's debugger sets it |
 | Signature integrity | SHA-256 of installed signing certificate compared with caller-supplied fingerprint | Detects absence of Mach-O code-signature command only; cannot expose/compare signing certificate fingerprint |
 | Emulator / simulator | Multiple build-property heuristics | Simulator build environment |
@@ -404,11 +408,11 @@ Keep it running while the example is open and tap **Scan now**; this detector ch
 
 `adb root` alone may not trigger the `root` signal; that detector needs a recognized root artifact or build tag, as noted in the Android trigger table below.
 
-For Xposed/LSPosed, use a disposable image rooted with [Magisk](https://topjohnwu.github.io/Magisk/install.html) and follow the [LSPosed installation guide](https://github.com/LSPosed/LSPosed/wiki/How-to-use-it). Enable a compatible module and scope it only to the example package `com.mekari.mobile_hardening_kit_example`; force-stop and relaunch the example before scanning. The detector searches the app process mappings for `xposed`/`lsposed`, so installing the framework alone may not produce a finding if no matching mapping is exposed. Xposed-compatible frameworks apply to Android, not iOS.
+For Xposed/LSPosed, use a disposable image rooted with [Magisk](https://topjohnwu.github.io/Magisk/install.html) and follow the [LSPosed installation guide](https://github.com/LSPosed/LSPosed/wiki/How-to-use-it). Enable a compatible module and scope it only to the example package `com.mekari.mobile_hardening_kit_example`; force-stop and relaunch the example before scanning. The detector matches the file names of app process mappings against `libxposed`, `xposedbridge`, and `lsposed`, so installing the framework alone may not produce a finding if no matching mapping is exposed. Xposed-compatible frameworks apply to Android, not iOS.
 
 #### iOS: Frida
 
-On a jailbroken test device, install Frida using its [official iOS instructions](https://frida.re/docs/ios/) and confirm the host can see the device with `frida-ps -U`. On a non-jailbroken device, use a development-signed debuggable build; Frida's official workflow injects Gadget into debuggable apps and Xcode mounts the Developer Disk Image. Use `frida-ps -U` to find the sample process, then attach with `frida -U -n Runner`. Keep Gadget's loaded image name recognizable (for example, `FridaGadget`) because this detector checks loaded library names. Tap **Scan now**, then detach when finished. There is no Xposed setup for iOS.
+On a jailbroken test device, install Frida using its [official iOS instructions](https://frida.re/docs/ios/) and confirm the host can see the device with `frida-ps -U`. On a non-jailbroken device, use a development-signed debuggable build; Frida's official workflow injects Gadget into debuggable apps and Xcode mounts the Developer Disk Image. Use `frida-ps -U` to find the sample process, then attach with `frida -U -n Runner`. Keep Gadget's loaded image file name recognizable (for example, `FridaGadget`) because this detector matches loaded image file names against the tokens listed under Capabilities. Tap **Scan now**, then detach when finished. There is no Xposed setup for iOS.
 
 Stop Frida and disable/uninstall test modules after testing. Root/jailbreak and instrumentation findings remain heuristic: a tool may be installed yet not expose a name or path this kit recognizes.
 
@@ -433,13 +437,15 @@ On the Android 17/API 37 emulator, **Scan now** reported `emulator` (`indicatorC
 
 ![Android 17 emulator showing emulator and devModeEnabled findings](docs/images/android-emulator-detection.jpg)
 
-On the rooted POCO F1 (Android 12/API 32), **Scan now** reported `root` with `managerPackage: "com.topjohnwu.magisk"` and, while Frida 17.18.0 was attached, `instrumentation` with `/memfd:frida-agent-64.so`. The screenshot below shows those findings alongside `accessibilityUnrecognized` and `devModeEnabled`.
+On the rooted POCO F1 (Android 12/API 32), **Scan now** reported `root` with `managerPackage: "com.topjohnwu.magisk"` and, while Frida 17.18.0 was attached, `instrumentation` with the artifact `/memfd:frida-agent-64.so`. The screenshot below predates the file-name-only artifacts, so it shows the full path form; current builds report `memfd:frida-agent-64.so`. It shows those findings alongside `accessibilityUnrecognized` and `devModeEnabled`.
 
 ![POCO F1 detecting root and Frida instrumentation](docs/images/poco-frida-instrumentation.jpg)
 
 LSPosed was active on the device, but its manager had no modules enabled or scoped for this app; this run did not produce an Xposed/LSPosed injection finding.
 
 On Android 12, SELinux denied the sample's `/proc/net/tcp` read, so `tracerPort` remained `0`; the Frida mapping was detected independently.
+
+Integrity monitor results on the same POCO F1 (Android 12, run from the app's own `untrusted_app` domain): with Frida attached at a 5 s interval, `instrumentation` was reported about 3 s after attach and cleared about 2 s after detach. A Frida spawn was caught on the start pass. The LSPosed module load appeared only as the low-confidence `artSegments` technique (`artTextSegments` 15), and it disappeared when the module was disabled. No interval passes ran while the app was backgrounded, and a `resume` pass ran on return. `trigger: manual` was observed only without a change, so it produced no duplicate events; a real change is not yet verified (see [Untested coverage](#untested-coverage)).
 
 ### Capabilities
 
