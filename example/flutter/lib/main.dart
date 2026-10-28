@@ -11,10 +11,10 @@ import 'play_sample_client.dart';
 void main() => runApp(const HardeningExampleApp());
 
 Map<String, Object?> _rawSignal(HardeningSignal signal) => <String, Object?>{
-      'type': signal.type.name,
-      'observedAt': signal.observedAt.toUtc().toIso8601String(),
-      'metadata': signal.metadata,
-    };
+  'type': signal.type.name,
+  'observedAt': signal.observedAt.toUtc().toIso8601String(),
+  'metadata': signal.metadata,
+};
 
 String _formatSignals(Iterable<HardeningSignal> signals) =>
     const JsonEncoder.withIndent('  ')
@@ -44,11 +44,11 @@ class HardeningExampleApp extends StatelessWidget {
   const HardeningExampleApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'Mobile Hardening Kit',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
-        home: const SignalExplorerPage(),
-      );
+    title: 'Mobile Hardening Kit',
+    debugShowCheckedModeBanner: false,
+    theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
+    home: const SignalExplorerPage(),
+  );
 }
 
 class SignalExplorerPage extends StatefulWidget {
@@ -96,8 +96,11 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
         uri.fragment.isNotEmpty) {
       return null;
     }
-    final loopback =
-        const <String>{'localhost', '127.0.0.1', '10.0.2.2'}.contains(uri.host);
+    final loopback = const <String>{
+      'localhost',
+      '127.0.0.1',
+      '10.0.2.2',
+    }.contains(uri.host);
     if (uri.scheme != 'https' &&
         !(kDebugMode && loopback && uri.scheme == 'http')) {
       return null;
@@ -147,7 +150,8 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
   Future<void> _toggleProtection(bool enabled) async {
     try {
       final state = await _kit.setScreenProtection(
-          enabled ? _fullProtection : ScreenProtection.off);
+        enabled ? _fullProtection : ScreenProtection.off,
+      );
       if (mounted) {
         setState(() {
           _protectionEnabled = enabled;
@@ -193,9 +197,11 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
     try {
       if (!_isAndroid && widget.sampleClient == null) {
         throw const PlaySampleException(
-            'Play Integrity is unavailable on this platform (Android only).');
+          'Play Integrity is unavailable on this platform (Android only).',
+        );
       }
-      final client = widget.sampleClient ??
+      final client =
+          widget.sampleClient ??
           PlaySampleClient(
             backend: _backend,
             cloudProjectNumber: _projectNumber,
@@ -224,122 +230,146 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Mobile Hardening Kit')),
-        body: ListView(padding: const EdgeInsets.all(16), children: <Widget>[
-          const Text(
-              'Client-side findings are heuristic signals. The kit reports only; it does not block flows.'),
-          const SizedBox(height: 12),
-          SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Protect sensitive display content'),
-              subtitle: const Text('Capture, recording, and app switcher.'),
-              value: _protectionEnabled,
-              onChanged: _checking ? null : _toggleProtection),
-          if (_protectionUnavailable.isNotEmpty)
-            Text('Unavailable: ${_protectionUnavailable.join(', ')}',
-                key: const ValueKey<String>('protection-unavailable')),
-          FilledButton.icon(
-              onPressed: _loading || _checking ? null : _refresh,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Scan now')),
-          if (_loading) const LinearProgressIndicator(),
-          if (_error != null)
-            ListTile(
-                leading: const Icon(Icons.error_outline),
-                title: const Text('Signal collection failed'),
-                subtitle: Text('$_error')),
-          const SizedBox(height: 16),
-          const Text('Snapshot response (raw JSON)'),
-          Card(
-              child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: SelectableText(_formatSignals(_snapshotSignals),
-                      key: const ValueKey<String>('snapshot-signals-json')))),
-          const SizedBox(height: 12),
-          const Text('Event stream (raw JSON)'),
-          Card(
-              child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: SelectableText(_formatSignals(_streamSignals),
-                      key: const ValueKey<String>('stream-signals-json')))),
-          const Divider(height: 32),
-          Text('Play Integrity sample',
-              style: Theme.of(context).textTheme.titleLarge),
-          const Text(
-              'Play verdicts are independently verified by the configured Go service. Kit hints are positive-only, client supplied, and not proof.'),
-          if (!_isAndroid)
-            const ListTile(
-              leading: Icon(Icons.info_outline),
-              title: Text('Android only'),
-              subtitle: Text(
-                  'Play Integrity is unavailable on this platform. Kit scans and display protection remain available.'),
-            ),
-          if (_isAndroid && (_backend == null || _projectNumber == null))
-            const ListTile(
-              leading: Icon(Icons.settings_outlined),
-              title: Text('Sample not configured'),
-              subtitle: Text(
-                  'Set PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER and a valid HTTPS PLAY_INTEGRITY_BACKEND_URL (debug loopback HTTP is allowed).'),
-            ),
-          if (_isAndroid &&
-              _backend == null &&
-              const String.fromEnvironment('PLAY_INTEGRITY_BACKEND_URL')
-                  .isNotEmpty)
-            const Text(
-                'Backend URL must use HTTPS, except debug loopback hosts.'),
-          DropdownButtonFormField<String>(
-            key: const ValueKey<String>('policy-selector'),
-            value: _policy,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Sample risk policy'),
-            items: _policies.entries
-                .map((entry) => DropdownMenuItem<String>(
-                      value: entry.key,
-                      child: Text(
-                        '${entry.key} — ${entry.value}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ))
-                .toList(),
-            onChanged: _checking
-                ? null
-                : (value) {
-                    if (value != null) setState(() => _policy = value);
-                  },
+    appBar: AppBar(title: const Text('Mobile Hardening Kit')),
+    body: ListView(
+      padding: const EdgeInsets.all(16),
+      children: <Widget>[
+        const Text(
+          'Client-side findings are heuristic signals. The kit reports only; it does not block flows.',
+        ),
+        const SizedBox(height: 12),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Protect sensitive display content'),
+          subtitle: const Text('Capture, recording, and app switcher.'),
+          value: _protectionEnabled,
+          onChanged: _checking ? null : _toggleProtection,
+        ),
+        if (_protectionUnavailable.isNotEmpty)
+          Text(
+            'Unavailable: ${_protectionUnavailable.join(', ')}',
+            key: const ValueKey<String>('protection-unavailable'),
           ),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            key: const ValueKey<String>('check-sample'),
-            onPressed: _checking || _loading ? null : _checkSample,
-            icon: _checking
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.verified_user_outlined),
-            label: Text(_checking ? 'Checking…' : 'Check sample'),
+        FilledButton.icon(
+          onPressed: _loading || _checking ? null : _refresh,
+          icon: const Icon(Icons.refresh),
+          label: const Text('Scan now'),
+        ),
+        if (_loading) const LinearProgressIndicator(),
+        if (_error != null)
+          ListTile(
+            leading: const Icon(Icons.error_outline),
+            title: const Text('Signal collection failed'),
+            subtitle: Text('$_error'),
           ),
-          if (_checking) const LinearProgressIndicator(),
-          if (_checkError != null)
-            ListTile(
-              leading: const Icon(Icons.error_outline),
-              title: const Text('Sample check unavailable'),
-              subtitle: Text(_checkError!),
+        const SizedBox(height: 16),
+        const Text('Snapshot response (raw JSON)'),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: SelectableText(
+              _formatSignals(_snapshotSignals),
+              key: const ValueKey<String>('snapshot-signals-json'),
             ),
-          if (_result != null) _resultView(_result!),
-          if (_kitSnapshotAvailable &&
-              !_snapshotSignals
-                  .any((signal) => _riskTypes.contains(signal.type)))
-            const Text(
-                'Kit risk: unavailable (no matching positive snapshot finding; this is not a negative result).'),
-          if (_kitSnapshotAvailable &&
-              _snapshotSignals
-                  .any((signal) => _riskTypes.contains(signal.type)))
-            const Text('Kit risk: detected (heuristic snapshot finding).'),
-        ]),
-      );
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Text('Event stream (raw JSON)'),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: SelectableText(
+              _formatSignals(_streamSignals),
+              key: const ValueKey<String>('stream-signals-json'),
+            ),
+          ),
+        ),
+        const Divider(height: 32),
+        Text(
+          'Play Integrity sample',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const Text(
+          'Play verdicts are independently verified by the configured Go service. Kit hints are positive-only, client supplied, and not proof.',
+        ),
+        if (!_isAndroid)
+          const ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('Android only'),
+            subtitle: Text(
+              'Play Integrity is unavailable on this platform. Kit scans and display protection remain available.',
+            ),
+          ),
+        if (_isAndroid && (_backend == null || _projectNumber == null))
+          const ListTile(
+            leading: Icon(Icons.settings_outlined),
+            title: Text('Sample not configured'),
+            subtitle: Text(
+              'Set PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER and a valid HTTPS PLAY_INTEGRITY_BACKEND_URL (debug loopback HTTP is allowed).',
+            ),
+          ),
+        if (_isAndroid &&
+            _backend == null &&
+            const String.fromEnvironment('PLAY_INTEGRITY_BACKEND_URL')
+                .isNotEmpty)
+          const Text(
+            'Backend URL must use HTTPS, except debug loopback hosts.',
+          ),
+        DropdownButtonFormField<String>(
+          key: const ValueKey<String>('policy-selector'),
+          initialValue: _policy,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Sample risk policy'),
+          items: _policies.entries
+              .map(
+                (entry) => DropdownMenuItem<String>(
+                  value: entry.key,
+                  child: Text(
+                    '${entry.key} — ${entry.value}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: _checking
+              ? null
+              : (value) {
+                  if (value != null) setState(() => _policy = value);
+                },
+        ),
+        const SizedBox(height: 8),
+        FilledButton.icon(
+          key: const ValueKey<String>('check-sample'),
+          onPressed: _checking || _loading ? null : _checkSample,
+          icon: _checking
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.verified_user_outlined),
+          label: Text(_checking ? 'Checking…' : 'Check sample'),
+        ),
+        if (_checking) const LinearProgressIndicator(),
+        if (_checkError != null)
+          ListTile(
+            leading: const Icon(Icons.error_outline),
+            title: const Text('Sample check unavailable'),
+            subtitle: Text(_checkError!),
+          ),
+        if (_result != null) _resultView(_result!),
+        if (_kitSnapshotAvailable &&
+            !_snapshotSignals.any((signal) => _riskTypes.contains(signal.type)))
+          const Text(
+            'Kit risk: unavailable (no matching positive snapshot finding; this is not a negative result).',
+          ),
+        if (_kitSnapshotAvailable &&
+            _snapshotSignals.any((signal) => _riskTypes.contains(signal.type)))
+          const Text('Kit risk: detected (heuristic snapshot finding).'),
+      ],
+    ),
+  );
 
   Widget _resultView(Map<String, Object?> result) {
     final verdicts = result['verdicts'] as Map;
@@ -354,17 +384,22 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
           children: <Widget>[
             Text('Illustrative sample decision: ${result['decision']}'),
             Text(
-                'Verification: ${result['verification']} · policy: ${result['policy']}'),
+              'Verification: ${result['verification']} · policy: ${result['policy']}',
+            ),
             Text(
-                'App recognition: ${verdicts['appRecognition'] ?? 'unavailable'}'),
+              'App recognition: ${verdicts['appRecognition'] ?? 'unavailable'}',
+            ),
             Text('App licensing: ${verdicts['appLicensing'] ?? 'unavailable'}'),
             Text(
-                'Device recognition: ${verdicts['deviceRecognition'] ?? 'unavailable'}'),
+              'Device recognition: ${verdicts['deviceRecognition'] ?? 'unavailable'}',
+            ),
             Text(
-                'Kit risk: ${risk['kit'] ?? 'unavailable'} · Play risk: ${risk['provider'] ?? 'unavailable'} · combined: ${risk['combined'] ?? 'unavailable'}'),
+              'Kit risk: ${risk['kit'] ?? 'unavailable'} · Play risk: ${risk['provider'] ?? 'unavailable'} · combined: ${risk['combined'] ?? 'unavailable'}',
+            ),
             if (reasons is List) ...reasons.whereType<String>().map(Text.new),
             const Text(
-                'Example policy only; client hints are untrusted and this is not production authorization.'),
+              'Example policy only; client hints are untrusted and this is not production authorization.',
+            ),
           ],
         ),
       ),

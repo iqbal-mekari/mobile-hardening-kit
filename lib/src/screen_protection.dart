@@ -21,10 +21,10 @@ class ScreenProtection {
   final bool obscureAppSwitcher;
 
   Map<String, Object?> toMap() => <String, Object?>{
-        'blockCapture': blockCapture,
-        'obscureWhileCaptured': obscureWhileCaptured,
-        'obscureAppSwitcher': obscureAppSwitcher,
-      };
+    'blockCapture': blockCapture,
+    'obscureWhileCaptured': obscureWhileCaptured,
+    'obscureAppSwitcher': obscureAppSwitcher,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -59,7 +59,8 @@ class ScreenProtectionState {
     final rawUnavailable = map['unavailable'];
     if (rawUnavailable is! List || rawUnavailable.any((e) => e is! String)) {
       throw FormatException(
-          'Invalid screen protection field "unavailable": $rawUnavailable');
+        'Invalid screen protection field "unavailable": $rawUnavailable',
+      );
     }
     return ScreenProtectionState(
       captureBlocked: flag('captureBlocked'),
@@ -87,11 +88,11 @@ class ScreenProtectionState {
 
   @override
   int get hashCode => Object.hash(
-        captureBlocked,
-        obscuresWhileCaptured,
-        obscuresAppSwitcher,
-        Object.hashAll(unavailable),
-      );
+    captureBlocked,
+    obscuresWhileCaptured,
+    obscuresAppSwitcher,
+    Object.hashAll(unavailable),
+  );
 
   static bool _listEquals(List<String> a, List<String> b) {
     if (a.length != b.length) return false;

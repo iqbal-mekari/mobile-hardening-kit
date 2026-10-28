@@ -22,10 +22,12 @@ class MobileHardeningKit {
   });
 
   static const MethodChannel _methods = MethodChannel('mobile_hardening_kit');
-  static const EventChannel _events =
-      EventChannel('mobile_hardening_kit/events');
-  static const EventChannel _integrityEvents =
-      EventChannel('mobile_hardening_kit/integrity_events');
+  static const EventChannel _events = EventChannel(
+    'mobile_hardening_kit/events',
+  );
+  static const EventChannel _integrityEvents = EventChannel(
+    'mobile_hardening_kit/integrity_events',
+  );
 
   // Channels are process-wide, so native subscriptions are shared across all
   // listeners and all kit instances.
@@ -47,13 +49,16 @@ class MobileHardeningKit {
   /// Returns observations in native detection order, at most one per type.
   /// Unsupported checks are omitted.
   Future<List<HardeningSignal>> snapshot() async {
-    final values =
-        await _methods.invokeListMethod<Object?>('snapshot', <String, Object?>{
-      if (expectedSigningCertificateSha256 != null)
-        'expectedSigningCertificateSha256': expectedSigningCertificateSha256,
-      'trustedAccessibilityPackages':
-          trustedAccessibilityPackages.toList(growable: false),
-    });
+    final values = await _methods.invokeListMethod<Object?>(
+      'snapshot',
+      <String, Object?>{
+        if (expectedSigningCertificateSha256 != null)
+          'expectedSigningCertificateSha256': expectedSigningCertificateSha256,
+        'trustedAccessibilityPackages': trustedAccessibilityPackages.toList(
+          growable: false,
+        ),
+      },
+    );
     return (values ?? const <Object?>[])
         .whereType<Map<Object?, Object?>>()
         .map(HardeningSignal.fromMap)
@@ -143,9 +148,12 @@ class MobileHardeningKit {
   /// first frames may leak). `blockCapture` is best-effort and not supported by
   /// Apple; never treat it as guaranteed.
   Future<ScreenProtectionState> setScreenProtection(
-      ScreenProtection protection) async {
+    ScreenProtection protection,
+  ) async {
     final result = await _methods.invokeMapMethod<Object?, Object?>(
-        'setScreenProtection', protection.toMap());
+      'setScreenProtection',
+      protection.toMap(),
+    );
     if (result == null) {
       throw const FormatException('setScreenProtection returned no state');
     }
@@ -159,19 +167,19 @@ class _IntegritySession {
     this.config,
     this.expectedSigningCertificateSha256,
     Set<String> trustedAccessibilityPackages,
-  ) : trustedAccessibilityPackages =
-            (trustedAccessibilityPackages.toList()..sort());
+  ) : trustedAccessibilityPackages = (trustedAccessibilityPackages.toList()
+        ..sort());
 
   final IntegrityMonitorConfig config;
   final String? expectedSigningCertificateSha256;
   final List<String> trustedAccessibilityPackages;
 
   Map<String, Object?> get arguments => <String, Object?>{
-        ...config.toMap(),
-        if (expectedSigningCertificateSha256 != null)
-          'expectedSigningCertificateSha256': expectedSigningCertificateSha256,
-        'trustedAccessibilityPackages': trustedAccessibilityPackages,
-      };
+    ...config.toMap(),
+    if (expectedSigningCertificateSha256 != null)
+      'expectedSigningCertificateSha256': expectedSigningCertificateSha256,
+    'trustedAccessibilityPackages': trustedAccessibilityPackages,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -184,8 +192,8 @@ class _IntegritySession {
 
   @override
   int get hashCode => Object.hash(
-        config,
-        expectedSigningCertificateSha256,
-        Object.hashAll(trustedAccessibilityPackages),
-      );
+    config,
+    expectedSigningCertificateSha256,
+    Object.hashAll(trustedAccessibilityPackages),
+  );
 }

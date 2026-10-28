@@ -25,10 +25,10 @@ class IntegrityMonitorConfig {
   /// Listen arguments for the native `integrity_events` channel:
   /// `{intervalMs, checkOnResume}` with the interval clamped to >= 5 s.
   Map<String, Object?> toMap() => <String, Object?>{
-        'intervalMs': (interval < minimumInterval ? minimumInterval : interval)
-            .inMilliseconds,
-        'checkOnResume': checkOnResume,
-      };
+    'intervalMs': (interval < minimumInterval ? minimumInterval : interval)
+        .inMilliseconds,
+    'checkOnResume': checkOnResume,
+  };
 
   @override
   bool operator ==(Object other) =>

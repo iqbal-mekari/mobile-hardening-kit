@@ -35,10 +35,11 @@ class HardeningSignal {
       ),
       observedAt:
           DateTime.tryParse(map['observedAt'] as String? ?? '')?.toUtc() ??
-              DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       metadata: rawMetadata is Map
           ? rawMetadata.map<String, Object>(
-              (key, value) => MapEntry('$key', value as Object))
+              (key, value) => MapEntry('$key', value as Object),
+            )
           : const <String, Object>{},
     );
   }

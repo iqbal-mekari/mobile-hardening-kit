@@ -11,8 +11,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('mobile_hardening_kit');
   const eventChannel = EventChannel('mobile_hardening_kit/events');
-  const integrityChannel =
-      EventChannel('mobile_hardening_kit/integrity_events');
+  const integrityChannel = EventChannel(
+    'mobile_hardening_kit/integrity_events',
+  );
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
@@ -23,8 +24,10 @@ void main() {
   });
 
   // Counts native listen/cancel calls and records listen arguments.
-  _NativeCalls mockNative(EventChannel target,
-      {void Function(MockStreamHandlerEventSink events)? onListen}) {
+  _NativeCalls mockNative(
+    EventChannel target, {
+    void Function(MockStreamHandlerEventSink events)? onListen,
+  }) {
     final calls = _NativeCalls();
     messenger.setMockStreamHandler(
       target,
@@ -48,49 +51,55 @@ void main() {
 
   Future<void> pump() => Future<void>.delayed(Duration.zero);
 
-  test('snapshot preserves native order and decodes confidence-free records',
-      () async {
-    messenger.setMockMethodCallHandler(
-        channel,
-        (call) async => <Object?>[
-              <String, Object?>{
-                'type': 'root',
-                'observedAt': '2026-01-02T03:04:05.000Z',
-                'metadata': <String, Object?>{'testKeys': true},
-              },
-              <String, Object?>{
-                'type': 'instrumentation',
-                'observedAt': '2026-01-02T03:04:06.000Z',
-                'metadata': <String, Object?>{
-                  'artifacts': <String>['frida'],
-                  'tracerPort': 0,
-                },
-              },
-              'invalid entry',
-            ]);
-
-    final List<HardeningSignal> signals = await MobileHardeningKit().snapshot();
-
-    expect(signals.map((signal) => signal.type).toList(), <HardeningSignalType>[
-      HardeningSignalType.root,
-      HardeningSignalType.instrumentation,
-    ]);
-    expect(signals.first.metadata, <String, Object>{'testKeys': true});
-    expect(signals.last.metadata['artifacts'], <String>['frida']);
-    expect(signals.first.observedAt, DateTime.utc(2026, 1, 2, 3, 4, 5));
-  });
-
   test(
-      'snapshot rejects unknown native signal types instead of silently masking them',
-      () async {
-    messenger.setMockMethodCallHandler(
+    'snapshot preserves native order and decodes confidence-free records',
+    () async {
+      messenger.setMockMethodCallHandler(
         channel,
         (call) async => <Object?>[
-              <String, Object?>{
-                'type': 'unknown',
-                'observedAt': '2026-01-02T03:04:05Z',
-              },
-            ]);
+          <String, Object?>{
+            'type': 'root',
+            'observedAt': '2026-01-02T03:04:05.000Z',
+            'metadata': <String, Object?>{'testKeys': true},
+          },
+          <String, Object?>{
+            'type': 'instrumentation',
+            'observedAt': '2026-01-02T03:04:06.000Z',
+            'metadata': <String, Object?>{
+              'artifacts': <String>['frida'],
+              'tracerPort': 0,
+            },
+          },
+          'invalid entry',
+        ],
+      );
+
+      final List<HardeningSignal> signals = await MobileHardeningKit()
+          .snapshot();
+
+      expect(
+        signals.map((signal) => signal.type).toList(),
+        <HardeningSignalType>[
+          HardeningSignalType.root,
+          HardeningSignalType.instrumentation,
+        ],
+      );
+      expect(signals.first.metadata, <String, Object>{'testKeys': true});
+      expect(signals.last.metadata['artifacts'], <String>['frida']);
+      expect(signals.first.observedAt, DateTime.utc(2026, 1, 2, 3, 4, 5));
+    },
+  );
+
+  test('snapshot rejects unknown native signal types instead of silently masking them', () async {
+    messenger.setMockMethodCallHandler(
+      channel,
+      (call) async => <Object?>[
+        <String, Object?>{
+          'type': 'unknown',
+          'observedAt': '2026-01-02T03:04:05Z',
+        },
+      ],
+    );
 
     expect(MobileHardeningKit().snapshot(), throwsFormatException);
   });
@@ -101,28 +110,30 @@ void main() {
     expect(await MobileHardeningKit().snapshot(), isEmpty);
   });
 
-  test('screenEvents skips non-map events and decodes valid observations',
-      () async {
-    messenger.setMockStreamHandler(
-      eventChannel,
-      MockStreamHandler.inline(
-        onListen: (arguments, events) {
-          events.success('unrecognized payload');
-          events.success(<String, Object?>{
-            'type': 'externalDisplay',
-            'observedAt': '2026-01-02T03:04:05Z',
-            'metadata': <String, Object?>{'connected': false},
-          });
-        },
-      ),
-    );
+  test(
+    'screenEvents skips non-map events and decodes valid observations',
+    () async {
+      messenger.setMockStreamHandler(
+        eventChannel,
+        MockStreamHandler.inline(
+          onListen: (arguments, events) {
+            events.success('unrecognized payload');
+            events.success(<String, Object?>{
+              'type': 'externalDisplay',
+              'observedAt': '2026-01-02T03:04:05Z',
+              'metadata': <String, Object?>{'connected': false},
+            });
+          },
+        ),
+      );
 
-    final signals = await MobileHardeningKit().screenEvents.take(1).toList();
+      final signals = await MobileHardeningKit().screenEvents.take(1).toList();
 
-    expect(signals, hasLength(1));
-    expect(signals.single.type, HardeningSignalType.externalDisplay);
-    expect(signals.single.metadata, <String, Object>{'connected': false});
-  });
+      expect(signals, hasLength(1));
+      expect(signals.single.type, HardeningSignalType.externalDisplay);
+      expect(signals.single.metadata, <String, Object>{'connected': false});
+    },
+  );
 
   test('screenEvents reports unknown signal types as format errors', () async {
     messenger.setMockStreamHandler(
@@ -189,91 +200,104 @@ void main() {
     expect(native.cancels, 2);
   });
 
-  test('cancelling one screenEvents listener keeps the other receiving',
-      () async {
-    late MockStreamHandlerEventSink sink;
-    mockNative(eventChannel, onListen: (events) => sink = events);
-    final kit = MobileHardeningKit();
-    final received = <HardeningSignal>[];
+  test(
+    'cancelling one screenEvents listener keeps the other receiving',
+    () async {
+      late MockStreamHandlerEventSink sink;
+      mockNative(eventChannel, onListen: (events) => sink = events);
+      final kit = MobileHardeningKit();
+      final received = <HardeningSignal>[];
 
-    final first = kit.screenEvents.listen((_) {});
-    final second = kit.screenEvents.listen(received.add);
-    await pump();
-    await first.cancel();
-    sink.success(<String, Object?>{
-      'type': 'externalDisplay',
-      'observedAt': '2026-01-02T03:04:05Z',
-    });
-    await pump();
+      final first = kit.screenEvents.listen((_) {});
+      final second = kit.screenEvents.listen(received.add);
+      await pump();
+      await first.cancel();
+      sink.success(<String, Object?>{
+        'type': 'externalDisplay',
+        'observedAt': '2026-01-02T03:04:05Z',
+      });
+      await pump();
 
-    expect(received.map((s) => s.type), <HardeningSignalType>[
-      HardeningSignalType.externalDisplay,
-    ]);
-    await second.cancel();
-  });
+      expect(received.map((s) => s.type), <HardeningSignalType>[
+        HardeningSignalType.externalDisplay,
+      ]);
+      await second.cancel();
+    },
+  );
 
-  test('IntegrityMonitorConfig defaults, clamping, equality, and hash code',
-      () {
-    const defaults = IntegrityMonitorConfig();
+  test(
+    'IntegrityMonitorConfig defaults, clamping, equality, and hash code',
+    () {
+      const defaults = IntegrityMonitorConfig();
 
-    expect(defaults.interval, const Duration(seconds: 30));
-    expect(defaults.checkOnResume, isTrue);
-    expect(defaults.toMap(), <String, Object?>{
-      'intervalMs': 30000,
-      'checkOnResume': true,
-    });
-    expect(
-      const IntegrityMonitorConfig(
-        interval: Duration(seconds: 1),
-        checkOnResume: false,
-      ).toMap(),
-      <String, Object?>{'intervalMs': 5000, 'checkOnResume': false},
-    );
-    expect(
-      const IntegrityMonitorConfig(interval: Duration(seconds: 5))
-          .toMap()['intervalMs'],
-      5000,
-    );
-    expect(defaults, const IntegrityMonitorConfig());
-    expect(defaults.hashCode, const IntegrityMonitorConfig().hashCode);
-    expect(defaults == Object(), isFalse);
-    expect(defaults,
-        isNot(const IntegrityMonitorConfig(interval: Duration(seconds: 31))));
-    expect(defaults, isNot(const IntegrityMonitorConfig(checkOnResume: false)));
-    expect(defaults.toString(), contains('checkOnResume: true'));
-  });
-
-  test('integrityEvents sends clamped config and omits a null certificate',
-      () async {
-    final native = mockNative(integrityChannel);
-
-    final subscription = MobileHardeningKit(
-      trustedAccessibilityPackages: const <String>{'com.b', 'com.a'},
-    )
-        .integrityEvents(const IntegrityMonitorConfig(
-          interval: Duration(seconds: 2),
+      expect(defaults.interval, const Duration(seconds: 30));
+      expect(defaults.checkOnResume, isTrue);
+      expect(defaults.toMap(), <String, Object?>{
+        'intervalMs': 30000,
+        'checkOnResume': true,
+      });
+      expect(
+        const IntegrityMonitorConfig(
+          interval: Duration(seconds: 1),
           checkOnResume: false,
-        ))
-        .listen((_) {});
-    await pump();
+        ).toMap(),
+        <String, Object?>{'intervalMs': 5000, 'checkOnResume': false},
+      );
+      expect(
+        const IntegrityMonitorConfig(interval: Duration(seconds: 5))
+            .toMap()['intervalMs'],
+        5000,
+      );
+      expect(defaults, const IntegrityMonitorConfig());
+      expect(defaults.hashCode, const IntegrityMonitorConfig().hashCode);
+      expect(defaults == Object(), isFalse);
+      expect(
+        defaults,
+        isNot(const IntegrityMonitorConfig(interval: Duration(seconds: 31))),
+      );
+      expect(
+        defaults,
+        isNot(const IntegrityMonitorConfig(checkOnResume: false)),
+      );
+      expect(defaults.toString(), contains('checkOnResume: true'));
+    },
+  );
 
-    expect(native.listens.single, <String, Object?>{
-      'intervalMs': 5000,
-      'checkOnResume': false,
-      'trustedAccessibilityPackages': <String>['com.a', 'com.b'],
-    });
-    await subscription.cancel();
-    await pump();
-    expect(native.cancels, 1);
-  });
+  test(
+    'integrityEvents sends clamped config and omits a null certificate',
+    () async {
+      final native = mockNative(integrityChannel);
+
+      final subscription =
+          MobileHardeningKit(
+                trustedAccessibilityPackages: const <String>{'com.b', 'com.a'},
+              )
+              .integrityEvents(
+                const IntegrityMonitorConfig(
+                  interval: Duration(seconds: 2),
+                  checkOnResume: false,
+                ),
+              )
+              .listen((_) {});
+      await pump();
+
+      expect(native.listens.single, <String, Object?>{
+        'intervalMs': 5000,
+        'checkOnResume': false,
+        'trustedAccessibilityPackages': <String>['com.a', 'com.b'],
+      });
+      await subscription.cancel();
+      await pump();
+      expect(native.cancels, 1);
+    },
+  );
 
   test('integrityEvents sends the certificate and default config', () async {
     final native = mockNative(integrityChannel);
 
-    final subscription =
-        MobileHardeningKit(expectedSigningCertificateSha256: 'ab:cd')
-            .integrityEvents()
-            .listen((_) {});
+    final subscription = MobileHardeningKit(
+      expectedSigningCertificateSha256: 'ab:cd',
+    ).integrityEvents().listen((_) {});
     await pump();
 
     expect(native.listens.single, <String, Object?>{
@@ -285,28 +309,32 @@ void main() {
     await subscription.cancel();
   });
 
-  test('integrityEvents shares one native subscription for the same config',
-      () async {
-    final native = mockNative(integrityChannel);
-    const config = IntegrityMonitorConfig(interval: Duration(seconds: 10));
-    final kitA = MobileHardeningKit(
-        trustedAccessibilityPackages: const <String>{'a', 'b'});
-    final kitB = MobileHardeningKit(
-        trustedAccessibilityPackages: const <String>{'b', 'a'});
+  test(
+    'integrityEvents shares one native subscription for the same config',
+    () async {
+      final native = mockNative(integrityChannel);
+      const config = IntegrityMonitorConfig(interval: Duration(seconds: 10));
+      final kitA = MobileHardeningKit(
+        trustedAccessibilityPackages: const <String>{'a', 'b'},
+      );
+      final kitB = MobileHardeningKit(
+        trustedAccessibilityPackages: const <String>{'b', 'a'},
+      );
 
-    final first = kitA.integrityEvents(config).listen((_) {});
-    final second = kitB.integrityEvents(config).listen((_) {});
-    await pump();
-    expect(native.listens, hasLength(1));
-    expect(kitA.integrityEvents(config), kitB.integrityEvents(config));
+      final first = kitA.integrityEvents(config).listen((_) {});
+      final second = kitB.integrityEvents(config).listen((_) {});
+      await pump();
+      expect(native.listens, hasLength(1));
+      expect(kitA.integrityEvents(config), kitB.integrityEvents(config));
 
-    await first.cancel();
-    await pump();
-    expect(native.cancels, 0);
-    await second.cancel();
-    await pump();
-    expect(native.cancels, 1);
-  });
+      await first.cancel();
+      await pump();
+      expect(native.cancels, 0);
+      await second.cancel();
+      await pump();
+      expect(native.cancels, 1);
+    },
+  );
 
   test('integrityEvents rejects a different config while active', () async {
     mockNative(integrityChannel);
@@ -316,18 +344,20 @@ void main() {
 
     expect(
       () => kit.integrityEvents(
-          const IntegrityMonitorConfig(interval: Duration(seconds: 10))),
+        const IntegrityMonitorConfig(interval: Duration(seconds: 10)),
+      ),
       throwsStateError,
     );
     expect(
-      () => kit.integrityEvents(const IntegrityMonitorConfig(
-        checkOnResume: false,
-      )),
+      () => kit.integrityEvents(
+        const IntegrityMonitorConfig(checkOnResume: false),
+      ),
       throwsStateError,
     );
     expect(
-      () => MobileHardeningKit(expectedSigningCertificateSha256: 'ab')
-          .integrityEvents(),
+      () =>
+          MobileHardeningKit(expectedSigningCertificateSha256: 'ab')
+              .integrityEvents(),
       throwsStateError,
     );
     expect(
@@ -343,7 +373,8 @@ void main() {
   test('re-listening to a held integrity stream keeps its config', () async {
     final native = mockNative(integrityChannel);
     final stream = MobileHardeningKit().integrityEvents(
-        const IntegrityMonitorConfig(interval: Duration(seconds: 45)));
+      const IntegrityMonitorConfig(interval: Duration(seconds: 45)),
+    );
     await stream.listen((_) {}).cancel();
     await pump();
 
@@ -355,64 +386,85 @@ void main() {
     await again.cancel();
   });
 
-  test('integrityEvents allows a new config after the last listener cancels',
-      () async {
-    final native = mockNative(integrityChannel);
-    final kit = MobileHardeningKit();
-    final first = kit.integrityEvents().listen((_) {});
-    await pump();
-    await first.cancel();
-    await pump();
+  test(
+    'integrityEvents allows a new config after the last listener cancels',
+    () async {
+      final native = mockNative(integrityChannel);
+      final kit = MobileHardeningKit();
+      final first = kit.integrityEvents().listen((_) {});
+      await pump();
+      await first.cancel();
+      await pump();
 
-    final second = kit
-        .integrityEvents(
-            const IntegrityMonitorConfig(interval: Duration(seconds: 12)))
-        .listen((_) {});
-    await pump();
+      final second = kit
+          .integrityEvents(
+            const IntegrityMonitorConfig(interval: Duration(seconds: 12)),
+          )
+          .listen((_) {});
+      await pump();
 
-    expect(native.listens, hasLength(2));
-    expect((native.listens.last! as Map)['intervalMs'], 12000);
-    await second.cancel();
-  });
+      expect(native.listens, hasLength(2));
+      expect((native.listens.last! as Map)['intervalMs'], 12000);
+      await second.cancel();
+    },
+  );
 
-  test('integrityEvents decodes change, trigger, and techniques metadata',
-      () async {
-    mockNative(integrityChannel, onListen: (events) {
-      events.success('ignored');
-      events.success(integrityEvent(<String, Object?>{
-        'change': 'detected',
-        'trigger': 'start',
-        'techniques': <String>['threadName', 'maps'],
-        'artifacts': <String>['thread:gum-js-loop'],
-      }));
-      events.success(integrityEvent(<String, Object?>{
-        'change': 'cleared',
-        'trigger': 'interval',
-        'techniques': <String>['maps'],
-      }));
-    });
+  test(
+    'integrityEvents decodes change, trigger, and techniques metadata',
+    () async {
+      mockNative(
+        integrityChannel,
+        onListen: (events) {
+          events.success('ignored');
+          events.success(
+            integrityEvent(<String, Object?>{
+              'change': 'detected',
+              'trigger': 'start',
+              'techniques': <String>['threadName', 'maps'],
+              'artifacts': <String>['thread:gum-js-loop'],
+            }),
+          );
+          events.success(
+            integrityEvent(<String, Object?>{
+              'change': 'cleared',
+              'trigger': 'interval',
+              'techniques': <String>['maps'],
+            }),
+          );
+        },
+      );
 
-    final signals =
-        await MobileHardeningKit().integrityEvents().take(2).toList();
+      final signals = await MobileHardeningKit()
+          .integrityEvents()
+          .take(2)
+          .toList();
 
-    expect(signals.map((s) => s.type),
-        everyElement(HardeningSignalType.instrumentation));
-    expect(signals.first.metadata['change'], 'detected');
-    expect(signals.first.metadata['trigger'], 'start');
-    expect(
-        signals.first.metadata['techniques'], <String>['threadName', 'maps']);
-    expect(signals.last.metadata['change'], 'cleared');
-    expect(signals.last.metadata['trigger'], 'interval');
-  });
+      expect(
+        signals.map((s) => s.type),
+        everyElement(HardeningSignalType.instrumentation),
+      );
+      expect(signals.first.metadata['change'], 'detected');
+      expect(signals.first.metadata['trigger'], 'start');
+      expect(signals.first.metadata['techniques'], <String>[
+        'threadName',
+        'maps',
+      ]);
+      expect(signals.last.metadata['change'], 'cleared');
+      expect(signals.last.metadata['trigger'], 'interval');
+    },
+  );
 
   test('integrityEvents reports unknown types and platform errors', () async {
-    mockNative(integrityChannel, onListen: (events) {
-      events.success(<String, Object?>{
-        'type': 'unknown',
-        'observedAt': '2026-01-02T03:04:05Z',
-      });
-      events.error(code: 'monitor_failed');
-    });
+    mockNative(
+      integrityChannel,
+      onListen: (events) {
+        events.success(<String, Object?>{
+          'type': 'unknown',
+          'observedAt': '2026-01-02T03:04:05Z',
+        });
+        events.error(code: 'monitor_failed');
+      },
+    );
 
     await expectLater(
       MobileHardeningKit().integrityEvents(),
@@ -423,27 +475,32 @@ void main() {
     );
   });
 
-  test('checkIntegrityNow invokes the native method without arguments',
-      () async {
-    MethodCall? received;
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      received = call;
-      return null;
-    });
+  test(
+    'checkIntegrityNow invokes the native method without arguments',
+    () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return null;
+      });
 
-    await MobileHardeningKit().checkIntegrityNow();
+      await MobileHardeningKit().checkIntegrityNow();
 
-    expect(received?.method, 'checkIntegrityNow');
-    expect(received?.arguments, isNull);
-  });
+      expect(received?.method, 'checkIntegrityNow');
+      expect(received?.arguments, isNull);
+    },
+  );
 
   test('signal decoder applies safe defaults for missing optional fields', () {
-    final signal =
-        HardeningSignal.fromMap(<Object?, Object?>{'type': 'emulator'});
+    final signal = HardeningSignal.fromMap(<Object?, Object?>{
+      'type': 'emulator',
+    });
 
     expect(signal.type, HardeningSignalType.emulator);
     expect(
-        signal.observedAt, DateTime.fromMillisecondsSinceEpoch(0, isUtc: true));
+      signal.observedAt,
+      DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    );
     expect(signal.metadata, isEmpty);
   });
 
@@ -455,7 +512,9 @@ void main() {
     });
 
     expect(
-        signal.observedAt, DateTime.fromMillisecondsSinceEpoch(0, isUtc: true));
+      signal.observedAt,
+      DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    );
     expect(signal.metadata, isEmpty);
   });
 
@@ -472,26 +531,25 @@ void main() {
   });
 
   test(
-      'signal equality and hash code do not depend on metadata insertion order',
-      () {
-    final first = HardeningSignal(
-      type: HardeningSignalType.instrumentation,
-      observedAt: DateTime.utc(2026),
-      metadata: const <String, Object>{'port': 27042, 'artifact': 'frida'},
-    );
-    final second = HardeningSignal(
-      type: HardeningSignalType.instrumentation,
-      observedAt: DateTime.utc(2026),
-      metadata: const <String, Object>{'artifact': 'frida', 'port': 27042},
-    );
+    'signal equality and hash code do not depend on metadata insertion order',
+    () {
+      final first = HardeningSignal(
+        type: HardeningSignalType.instrumentation,
+        observedAt: DateTime.utc(2026),
+        metadata: const <String, Object>{'port': 27042, 'artifact': 'frida'},
+      );
+      final second = HardeningSignal(
+        type: HardeningSignalType.instrumentation,
+        observedAt: DateTime.utc(2026),
+        metadata: const <String, Object>{'artifact': 'frida', 'port': 27042},
+      );
 
-    expect(first, second);
-    expect(first.hashCode, second.hashCode);
-  });
+      expect(first, second);
+      expect(first.hashCode, second.hashCode);
+    },
+  );
 
-  test(
-      'signal equality distinguishes type, timestamp, metadata, and other objects',
-      () {
+  test('signal equality distinguishes type, timestamp, metadata, and other objects', () {
     final signal = HardeningSignal(
       type: HardeningSignalType.instrumentation,
       observedAt: DateTime.utc(2026),
@@ -501,27 +559,33 @@ void main() {
     expect(signal == Object(), isFalse);
     expect(
       signal,
-      isNot(HardeningSignal(
-        type: HardeningSignalType.root,
-        observedAt: DateTime.utc(2026),
-        metadata: const <String, Object>{'artifact': 'frida'},
-      )),
+      isNot(
+        HardeningSignal(
+          type: HardeningSignalType.root,
+          observedAt: DateTime.utc(2026),
+          metadata: const <String, Object>{'artifact': 'frida'},
+        ),
+      ),
     );
     expect(
       signal,
-      isNot(HardeningSignal(
-        type: HardeningSignalType.instrumentation,
-        observedAt: DateTime.utc(2026, 1, 2),
-        metadata: const <String, Object>{'artifact': 'frida'},
-      )),
+      isNot(
+        HardeningSignal(
+          type: HardeningSignalType.instrumentation,
+          observedAt: DateTime.utc(2026, 1, 2),
+          metadata: const <String, Object>{'artifact': 'frida'},
+        ),
+      ),
     );
     expect(
       signal,
-      isNot(HardeningSignal(
-        type: HardeningSignalType.instrumentation,
-        observedAt: DateTime.utc(2026),
-        metadata: const <String, Object>{'artifact': 'xposed'},
-      )),
+      isNot(
+        HardeningSignal(
+          type: HardeningSignalType.instrumentation,
+          observedAt: DateTime.utc(2026),
+          metadata: const <String, Object>{'artifact': 'xposed'},
+        ),
+      ),
     );
   });
 
@@ -559,37 +623,39 @@ void main() {
   });
 
   Map<String, Object?> stateReply() => <String, Object?>{
-        'captureBlocked': true,
-        'obscuresWhileCaptured': false,
-        'obscuresAppSwitcher': true,
-        'unavailable': <Object?>['obscureWhileCaptured:apiLevel'],
-        'extra': 'ignored',
-      };
+    'captureBlocked': true,
+    'obscuresWhileCaptured': false,
+    'obscuresAppSwitcher': true,
+    'unavailable': <Object?>['obscureWhileCaptured:apiLevel'],
+    'extra': 'ignored',
+  };
 
-  test('setScreenProtection sends options and decodes the applied state',
-      () async {
-    MethodCall? received;
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      received = call;
-      return stateReply();
-    });
+  test(
+    'setScreenProtection sends options and decodes the applied state',
+    () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return stateReply();
+      });
 
-    final state = await MobileHardeningKit().setScreenProtection(
-      const ScreenProtection(blockCapture: true, obscureAppSwitcher: true),
-    );
+      final state = await MobileHardeningKit().setScreenProtection(
+        const ScreenProtection(blockCapture: true, obscureAppSwitcher: true),
+      );
 
-    expect(received?.method, 'setScreenProtection');
-    expect(received?.arguments, <String, Object?>{
-      'blockCapture': true,
-      'obscureWhileCaptured': false,
-      'obscureAppSwitcher': true,
-    });
-    expect(state.captureBlocked, isTrue);
-    expect(state.obscuresWhileCaptured, isFalse);
-    expect(state.obscuresAppSwitcher, isTrue);
-    expect(state.unavailable, <String>['obscureWhileCaptured:apiLevel']);
-    expect(() => state.unavailable.add('x'), throwsUnsupportedError);
-  });
+      expect(received?.method, 'setScreenProtection');
+      expect(received?.arguments, <String, Object?>{
+        'blockCapture': true,
+        'obscureWhileCaptured': false,
+        'obscureAppSwitcher': true,
+      });
+      expect(state.captureBlocked, isTrue);
+      expect(state.obscuresWhileCaptured, isFalse);
+      expect(state.obscuresAppSwitcher, isTrue);
+      expect(state.unavailable, <String>['obscureWhileCaptured:apiLevel']);
+      expect(() => state.unavailable.add('x'), throwsUnsupportedError);
+    },
+  );
 
   test('setScreenProtection(off) sends all-false options', () async {
     MethodCall? received;
@@ -603,8 +669,9 @@ void main() {
       };
     });
 
-    final state =
-        await MobileHardeningKit().setScreenProtection(ScreenProtection.off);
+    final state = await MobileHardeningKit().setScreenProtection(
+      ScreenProtection.off,
+    );
 
     expect(received?.arguments, <String, Object?>{
       'blockCapture': false,
@@ -618,16 +685,22 @@ void main() {
   test('setScreenProtection rejects a null native result', () {
     messenger.setMockMethodCallHandler(channel, (call) async => null);
 
-    expect(MobileHardeningKit().setScreenProtection(ScreenProtection.off),
-        throwsFormatException);
+    expect(
+      MobileHardeningKit().setScreenProtection(ScreenProtection.off),
+      throwsFormatException,
+    );
   });
 
   test('setScreenProtection propagates platform errors', () {
     messenger.setMockMethodCallHandler(
-        channel, (call) async => throw PlatformException(code: 'unavailable'));
+      channel,
+      (call) async => throw PlatformException(code: 'unavailable'),
+    );
 
-    expect(MobileHardeningKit().setScreenProtection(ScreenProtection.off),
-        throwsA(isA<PlatformException>()));
+    expect(
+      MobileHardeningKit().setScreenProtection(ScreenProtection.off),
+      throwsA(isA<PlatformException>()),
+    );
   });
 
   test('state decoder rejects missing and mistyped keys', () {
@@ -655,7 +728,8 @@ void main() {
     );
     expect(
       () => ScreenProtectionState.fromMap(
-          stateReply()..['unavailable'] = <Object?>[1]),
+        stateReply()..['unavailable'] = <Object?>[1],
+      ),
       throwsFormatException,
     );
   });
@@ -671,21 +745,28 @@ void main() {
     expect(ScreenProtection.off.toMap().values, everyElement(isFalse));
     expect(all.toMap().values, everyElement(isTrue));
     expect(
-        all,
-        const ScreenProtection(
-          blockCapture: true,
-          obscureWhileCaptured: true,
-          obscureAppSwitcher: true,
-        ));
+      all,
+      const ScreenProtection(
+        blockCapture: true,
+        obscureWhileCaptured: true,
+        obscureAppSwitcher: true,
+      ),
+    );
     expect(all.hashCode, all.hashCode);
     expect(all.hashCode, isNot(ScreenProtection.off.hashCode));
     expect(all == Object(), isFalse);
-    expect(ScreenProtection.off,
-        isNot(const ScreenProtection(blockCapture: true)));
-    expect(ScreenProtection.off,
-        isNot(const ScreenProtection(obscureWhileCaptured: true)));
-    expect(ScreenProtection.off,
-        isNot(const ScreenProtection(obscureAppSwitcher: true)));
+    expect(
+      ScreenProtection.off,
+      isNot(const ScreenProtection(blockCapture: true)),
+    );
+    expect(
+      ScreenProtection.off,
+      isNot(const ScreenProtection(obscureWhileCaptured: true)),
+    );
+    expect(
+      ScreenProtection.off,
+      isNot(const ScreenProtection(obscureAppSwitcher: true)),
+    );
   });
 
   test('ScreenProtectionState equality and hash code', () {
@@ -694,13 +775,12 @@ void main() {
       bool whileCaptured = false,
       bool switcher = true,
       List<String> unavailable = const <String>['a:b'],
-    }) =>
-        ScreenProtectionState(
-          captureBlocked: blocked,
-          obscuresWhileCaptured: whileCaptured,
-          obscuresAppSwitcher: switcher,
-          unavailable: unavailable,
-        );
+    }) => ScreenProtectionState(
+      captureBlocked: blocked,
+      obscuresWhileCaptured: whileCaptured,
+      obscuresAppSwitcher: switcher,
+      unavailable: unavailable,
+    );
 
     expect(make(), make());
     expect(make().hashCode, make().hashCode);
