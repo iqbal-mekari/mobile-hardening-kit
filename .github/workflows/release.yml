@@ -14,7 +14,7 @@ permissions:
   packages: write
 
 env:
-  FLUTTER_VERSION: 3.24.0
+  FLUTTER_VERSION: 3.47.8
 
 jobs:
   release:
@@ -25,6 +25,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Validate Gradle wrapper checksums
+        uses: gradle/actions/wrapper-validation@v6
       - name: Install Flutter ${{ env.FLUTTER_VERSION }} from the official repository
         run: |
           git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"

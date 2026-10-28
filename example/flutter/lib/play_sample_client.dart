@@ -5,8 +5,9 @@ import 'dart:math';
 
 import 'package:flutter/services.dart';
 
-const _playChannel =
-    MethodChannel('mobile_hardening_kit_example/play_integrity');
+const _playChannel = MethodChannel(
+  'mobile_hardening_kit_example/play_integrity',
+);
 
 class PlaySampleException implements Exception {
   const PlaySampleException(this.message);
@@ -26,7 +27,9 @@ class PlaySampleClient {
   static String requestId([Random? random]) {
     final source = random ?? Random.secure();
     return List<String>.generate(
-        32, (_) => source.nextInt(16).toRadixString(16)).join();
+      32,
+      (_) => source.nextInt(16).toRadixString(16),
+    ).join();
   }
 
   static String canonical({
@@ -46,7 +49,8 @@ class PlaySampleClient {
     final base = backend;
     if (projectNumber == null || base == null) {
       throw const PlaySampleException(
-          'Configure PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER and PLAY_INTEGRITY_BACKEND_URL to run a sample check.');
+        'Configure PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER and PLAY_INTEGRITY_BACKEND_URL to run a sample check.',
+      );
     }
     final request = requestId();
     final binding = canonical(
@@ -57,44 +61,51 @@ class PlaySampleClient {
     );
     final http = HttpClient()..connectionTimeout = const Duration(seconds: 10);
     try {
-      final tokenResult = await _playChannel.invokeMapMethod<Object?, Object?>(
-        'requestToken',
-        <String, Object?>{
-          'cloudProjectNumber': projectNumber,
-          'requestPayload': binding,
-        },
-      ).timeout(const Duration(seconds: 60));
+      final tokenResult = await _playChannel
+          .invokeMapMethod<Object?, Object?>('requestToken', <String, Object?>{
+            'cloudProjectNumber': projectNumber,
+            'requestPayload': binding,
+          })
+          .timeout(const Duration(seconds: 60));
       final token = tokenResult?['token'];
       if (token is! String || token.isEmpty) {
         throw const PlaySampleException(
-            'Play Integrity did not return a token.');
+          'Play Integrity did not return a token.',
+        );
       }
       final req = await http
           .postUrl(base.resolve('/check'))
           .timeout(const Duration(seconds: 15));
       req.headers.contentType = ContentType.json;
-      req.write(jsonEncode(<String, Object?>{
-        'action': 'sample-check',
-        'requestId': request,
-        'policy': policy,
-        'kitAvailable': kitAvailable,
-        'kitSignals': kitSignals,
-        'integrityToken': token,
-      }));
+      req.write(
+        jsonEncode(<String, Object?>{
+          'action': 'sample-check',
+          'requestId': request,
+          'policy': policy,
+          'kitAvailable': kitAvailable,
+          'kitSignals': kitSignals,
+          'integrityToken': token,
+        }),
+      );
       final response = await req.close().timeout(const Duration(seconds: 20));
-      final bytes = await response.fold<List<int>>(<int>[], (all, chunk) {
-        if (all.length + chunk.length > 65536) {
-          throw const PlaySampleException(
-              'Backend response exceeded the 64 KB limit.');
-        }
-        return all..addAll(chunk);
-      }).timeout(const Duration(seconds: 10));
+      final bytes = await response
+          .fold<List<int>>(<int>[], (all, chunk) {
+            if (all.length + chunk.length > 65536) {
+              throw const PlaySampleException(
+                'Backend response exceeded the 64 KB limit.',
+              );
+            }
+            return all..addAll(chunk);
+          })
+          .timeout(const Duration(seconds: 10));
       return parseResponse(response.statusCode, utf8.decode(bytes), policy);
     } on PlatformException catch (error) {
       final message = error.message;
-      throw PlaySampleException(message != null && message.isNotEmpty
-          ? message.substring(0, min(240, message.length))
-          : 'Play Integrity provider error (${error.code}).');
+      throw PlaySampleException(
+        message != null && message.isNotEmpty
+            ? message.substring(0, min(240, message.length))
+            : 'Play Integrity provider error (${error.code}).',
+      );
     } on TimeoutException {
       throw const PlaySampleException('Play Integrity check timed out.');
     } on FormatException {
@@ -107,7 +118,10 @@ class PlaySampleClient {
   }
 
   static Map<String, Object?> parseResponse(
-      int statusCode, String body, String policy) {
+    int statusCode,
+    String body,
+    String policy,
+  ) {
     final decoded = jsonDecode(body);
     if (decoded is! Map<String, dynamic>) {
       throw const PlaySampleException('Backend returned an invalid response.');
@@ -115,9 +129,11 @@ class PlaySampleClient {
     if (statusCode < 200 || statusCode >= 300) {
       final error = decoded['error'];
       final message = error is Map ? error['message'] : null;
-      throw PlaySampleException(message is String && message.length <= 240
-          ? message
-          : 'Backend check failed (HTTP $statusCode).');
+      throw PlaySampleException(
+        message is String && message.length <= 240
+            ? message
+            : 'Backend check failed (HTTP $statusCode).',
+      );
     }
     final verdicts = decoded['verdicts'];
     final risk = decoded['risk'];
@@ -148,10 +164,12 @@ class PlaySampleClient {
             !appLicensingValues.contains(verdicts['appLicensing'])) ||
         (device != null &&
             (device is! List ||
-                device.any((label) =>
-                    label is! String ||
-                    label.length > 80 ||
-                    !deviceValues.contains(label)))) ||
+                device.any(
+                  (label) =>
+                      label is! String ||
+                      label.length > 80 ||
+                      !deviceValues.contains(label),
+                ))) ||
         !riskValues.contains(risk['kit']) ||
         !riskValues.contains(risk['provider']) ||
         !riskValues.contains(risk['combined']) ||
@@ -159,7 +177,8 @@ class PlaySampleClient {
         reasons.length > 32 ||
         reasons.any((reason) => reason is! String || reason.length > 500)) {
       throw const PlaySampleException(
-          'Backend returned an incomplete or unknown verification result.');
+        'Backend returned an incomplete or unknown verification result.',
+      );
     }
     return decoded;
   }

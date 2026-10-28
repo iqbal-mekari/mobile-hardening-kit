@@ -4,20 +4,9 @@ A dependency-light library that collects heuristic client-side integrity and dis
 
 ## Requirements
 
-- Flutter 3.24.0 or later
-- Android min SDK 23. Consumers need Android Gradle Plugin 8.6.0 or later and should compile against SDK 35 (the tested combination; older AGP 8.x versions are unverified, and AGP 7.x cannot read the SDK 35 `android.jar`).
-- iOS deployment target 15.0. With Xcode 27 (minimum deployment target 15.0), Flutter 3.24's engine pod still declares 12.0, so apps need to raise every pod target in their `Podfile`:
-
-  ```ruby
-  post_install do |installer|
-    installer.pods_project.targets.each do |target|
-      flutter_additional_ios_build_settings(target)
-      target.build_configurations.each do |config|
-        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      end
-    end
-  end
-  ```
+- Flutter 3.47.8 or later, Dart 3.13.7 or later (the package floors are `flutter: '>=3.47.8'` and `sdk: '>=3.13.7 <4.0.0'`).
+- Android min SDK 24. Consumers build with Android Gradle Plugin 9.0.1 or later, Gradle 9.1.0 or later, Kotlin Gradle plugin 2.3.20, and JDK 17, and compile against SDK 36 (the AAR declares `minCompileSdk` 36; this is the tested combination). The library uses AGP 9 built-in Kotlin; the Flutter plugin builds whether the app sets `android.builtInKotlin` to `true` or `false`.
+- iOS deployment target 15.0. Flutter apps built with Xcode 27 must use the UIScene lifecycle; Flutter 3.47.8 migrates an unmodified `AppDelegate` on `flutter build ios` (see [the Flutter UIScene migration guide](https://docs.flutter.dev/release/breaking-changes/uiscenedelegate)).
 - No third-party Dart runtime dependencies. The only package development dependency besides Flutter SDK test tools is the Flutter-maintained `flutter_lints` analyzer rules package.
 
 ## Add the package
@@ -39,7 +28,7 @@ The detection logic lives in two Flutter-free cores; the Flutter plugin only ada
 | Android | `native/android/core` (`MobileHardeningKit.kt`, `HardeningSignal.kt`) | `android/.../MobileHardeningKitPlugin.kt` |
 | iOS | `ios/Classes/Core` (`MobileHardeningKit.swift`, `HardeningSignal.swift`) | `ios/Classes/MobileHardeningKitPlugin.swift` |
 
-### Android (Kotlin/Java, min SDK 23)
+### Android (Kotlin/Java, min SDK 24)
 
 Each tagged release publishes the AAR to this repository's GitHub Packages (Maven) and attaches the AAR, POM, and Gradle metadata to the GitHub Release. GitHub Packages requires a token even for public packages: use a personal access token with `read:packages`, supplied as Gradle properties or environment variables (never commit it).
 
@@ -70,6 +59,10 @@ val signals = kit.snapshot(
 // Optional: events and opt-in FLAG_SECURE need the host activity.
 kit.attachActivity(activity)          // onCreate/onStart; pair with detachActivity() in onDestroy
 kit.startObserving { signal -> /* HardeningSignal */ }
+// Opt-in integrity monitor: re-checks on a schedule, reports new, changed, or cleared findings.
+kit.startMonitoring(IntegrityMonitorConfig(intervalMs = 30_000), { signal -> /* metadata: change, trigger, techniques */ })
+// Interval is clamped to 5 s to 24 h. Without an attached activity the monitor stays paused after its start pass.
+kit.checkIntegrityNow()                  // optional: one pass now, trigger "manual"
 // Sensitive flow only; every option is opt-in and independent.
 val state = kit.setScreenProtection(
   ScreenProtection(blockCapture = true, obscureWhileCaptured = true, obscureAppSwitcher = true)
@@ -78,6 +71,7 @@ val state = kit.setScreenProtection(
 // state.unavailable: "<option>:<reason>" entries for options the platform could not apply
 // ...
 kit.setScreenProtection(ScreenProtection.OFF)
+kit.stopMonitoring()
 kit.stopObserving()
 kit.detachActivity()
 ```
@@ -98,6 +92,9 @@ import MobileHardeningKit
 let kit = MobileHardeningKit()
 let signals = kit.snapshot()                 // [HardeningSignal]
 kit.startObserving { signal in /* capture, screenshot, external display changes */ }
+// Opt-in integrity monitor: report-only, foreground only; reports new, changed, or cleared findings.
+kit.startMonitoring(IntegrityMonitorConfig(interval: 30)) { signal in /* metadata: change, trigger, techniques */ }
+kit.checkIntegrityNow()                  // optional: one pass now, trigger "manual"
 
 // Sensitive flow only; every option is opt-in and independent.
 let state = kit.setScreenProtection(
@@ -107,6 +104,7 @@ let state = kit.setScreenProtection(
 // state.unavailable: "<option>:<reason>" entries, e.g. "blockCapture:windowNotReady"
 // ...
 kit.setScreenProtection(.off)
+kit.stopMonitoring()
 kit.stopObserving()
 ```
 
@@ -143,8 +141,9 @@ for (final finding in findings) {
   print('${finding.type.name}: ${finding.observedAt.toIso8601String()} ${finding.metadata}');
 }
 
-final subscription = hardening.stream.listen((finding) {
+final subscription = hardening.screenEvents.listen((finding) {
   // Receives platform-observable display/capture state changes, not a poll.
+  // Integrity findings come from integrityEvents (see Integrity monitor below).
 });
 // Cancel when the owning screen/service is disposed.
 await subscription.cancel();
@@ -154,20 +153,140 @@ Set `expectedSigningCertificateSha256` to the signing certificate's SHA-256 dige
 
 `HardeningSignal.metadata` is bounded, platform-generated, and intended to contain no user identifiers. `observedAt` is UTC. Unsupported or unavailable checks are omitted rather than reported as clean.
 
+## Integrity monitor
+
+The integrity monitor is **opt-in, report-only, and foreground only**. While subscribed, it re-runs integrity checks on a schedule and reports only findings that are new, changed, or cleared. It never blocks, kills, or alters the app, and it does not run while the app is in the background. `snapshot()` is unchanged and remains the choice for one-off reads.
+
+Screen events and integrity findings are separate streams with separate channels, lifecycles, and costs: `screenEvents` for screenshot, capture, and display changes, and `integrityEvents` for the monitor.
+
+### Usage
+
+```dart
+final subscription = hardening.integrityEvents(
+  const IntegrityMonitorConfig(
+    interval: Duration(seconds: 30), // clamped to 5 seconds to 24 hours
+    checkOnResume: true,
+  ),
+).listen((finding) {
+  // metadata.change:     detected | changed | cleared
+  // metadata.trigger:    start | resume | interval | imageLoad (iOS) | manual
+  // metadata.techniques: evidence sources, see "Evidence sources" below
+});
+
+// Optional, for example before a sensitive action. No-op unless monitoring.
+await hardening.checkIntegrityNow();
+
+// Cancel when the owning screen or service is disposed.
+await subscription.cancel();
+```
+
+- The first pass (`trigger: start`) reports every current finding as `detected`. Later passes report only `detected`, `changed`, or `cleared` findings. A `cleared` event carries the last known metadata.
+- A finding is considered the same when its type, sorted `techniques`, and sorted `artifacts` match. Timestamps are excluded.
+- `checkIntegrityNow()` results arrive on `integrityEvents` with `trigger: manual`.
+- Native callers use `startMonitoring` / `stopMonitoring` / `checkIntegrityNow` (see [Native integration](#native-integration-no-flutter)). Starting the monitor again replaces the running session.
+
+### Shared subscription and `StateError`
+
+All listeners, on every kit instance in the process, share one native monitor session. While it has listeners, calling `integrityEvents` with a different `IntegrityMonitorConfig`, or from an instance with a different `expectedSigningCertificateSha256` or `trustedAccessibilityPackages`, throws a `StateError`. Each stream returned by `integrityEvents` is bound to the session of its own call. Listening to such a stream while a different session is active fails that subscription with a `StateError` (delivered as an error event), and native monitoring does not start for it. After the last listener cancels, a new configuration is allowed. `screenEvents` (and the deprecated `stream`) share one process-wide native subscription the same way: cancelling one listener never stops another.
+
+### Timing: when each tool can enter the process
+
+Attach timing decides the schedule. Interval passes run only the runtime-attach tier (instrumentation and debugger) to bound cost.
+
+| Tool | Enters | Mid-run attach | Schedule |
+| --- | --- | --- | --- |
+| Frida attach (frida-server) | any time; ptrace inject then detach | yes | start + resume + interval (+ iOS image load) |
+| Frida spawn / Gadget | process start | no | start + resume |
+| LSPosed (Zygisk/Riru), Xposed, Zygisk modules | before app specialization | no | start + resume |
+| Magisk / KernelSU / APatch, jailbreak | device state before launch | rare (assumed) | start + resume |
+| Debugger (JDWP, ptrace, lldb) | any time | yes | start + resume + interval |
+| Emulator, signature, dev settings, accessibility | device/app state | settings can change | start + resume |
+
+| Pass (`trigger`) | Tier | When |
+| --- | --- | --- |
+| `start` | full | on subscribe |
+| `resume` | full | app returns to the foreground (when `checkOnResume` is true) |
+| `interval` | runtime (instrumentation, debugger) | every `interval` (clamped to 5 s to 24 h) while foregrounded; paused while the Android activity is stopped or the iOS app is not active, and on Android until an activity is attached |
+| `imageLoad` (iOS) | runtime (instrumentation) | a matching dyld image loads while subscribed |
+| `manual` | full | `checkIntegrityNow()` |
+
+The full tier runs every `snapshot()` check except `screenCaptureActive` and `externalDisplay`, which belong to `screenEvents` only. A runtime pass never clears findings of other types.
+
+### Cost
+
+Measured on one device (POCO F1, Android 12, debug build, before the regex-hoisting fix; single-device, debug-build numbers, not a general benchmark): a runtime-tier interval pass had a median of about 114 ms (max about 134 ms), and a full pass a median of about 197 ms (max about 260 ms). Both run on a background thread. Keep the 30 s default outside sensitive screens, and shorten the interval only while a sensitive screen is open.
+
+### Evidence sources (`techniques`)
+
+Every monitor event and every `snapshot()` finding of these types carries `techniques`, the evidence sources behind it. Use them to weight findings; the kit does not rank them.
+
+| Platform | Type | `techniques` values |
+| --- | --- | --- |
+| Android | `instrumentation` | `maps`, `threadName`, `memfdExec`, `artSegments`, `port` (reported only when one of these hits); `anonRwx` is supporting evidence only and is never reported alone as Frida |
+| Android | `debuggerAttach` | `jdwp`, `tracerPid` |
+| Android | `root` | `paths`, `buildTags`, `managerPackage`, `mountinfo` |
+| iOS | `instrumentation` | `dyldImage`, `dyldImageLoad` (live image-load observer) |
+| iOS | `debuggerAttach` | `pTraced` |
+| iOS | `jailbreak` | `paths`, `urlSchemes` |
+
+### Event metadata
+
+Monitor events use the `snapshot()` metadata for their type, plus `change`, `trigger`, and `techniques`. Android `instrumentation` also carries `tracerPort` (API 28 and below, otherwise 0), `anonRwxCount`, and `artTextSegments`. `artifacts` on `instrumentation` (both platforms) hold file names only, never directory paths: at most 8 entries of at most 120 characters. Android entries are mapping file names, memfd entries such as `memfd:frida-agent-64.so`, and thread entries `thread:<name>`. iOS entries are lowercased image file names.
+
+## Limits of the integrity monitor
+
+- **Detection is a race.** Once Frida or another hooker is attached, it can hook the detector's `/proc` reads, `sysctl`, or `dladdr` calls, or the monitor itself. Renamed agents and ports evade name matching. Treat findings as heuristic evidence, not a security boundary.
+- **LSPosed is not detected.** Phase 0 on one device (POCO F1, Android 12 / API 32, LSPosed 1.9.2) found no LSPosed name in maps, threads, fds, or mountinfo, and the Java-side `Class.forName` probes are hidden from both class loaders. The only signal is `artSegments`, a low-confidence heuristic (libart text-segment split) that other hookers may also produce. The kit makes no LSPosed detection claim.
+- **`/proc/net` is closed to apps from Android 10.** The Frida port probe (`port`) runs only on API 28 and below. The kit adds no `INTERNET` permission and makes no network connection to check ports.
+- **Xcode and lldb set `P_TRACED`.** Debugger findings during development are expected on iOS.
+- **False positives.** WebView and JS-engine executable mappings can produce `memfdExec` or `anonRwx`; `jit-cache` memfd mappings are excluded by name. Legitimate SDK method swizzling is not checked.
+- **Coverage is partial.** Some combinations are untested (see below). Do not assume a clean pass means no tool is present.
+
+### Recommended backend practice
+
+Client-side checks are bypassable, so decide policy on the server:
+
+- Report findings to your backend, not only to the local UI. Keep the decision logic there.
+- Treat a client that stops reporting as suspicious, not as clean.
+- On sensitive screens, shorten the interval and call `checkIntegrityNow()` before the action.
+- Weigh `techniques`; supporting evidence such as `anonRwx` alone is not Frida evidence.
+
+### Data handling
+
+Findings forwarded to a backend may become personal data under UU PDP (Law 27/2022) once they are linked to a user. The kit keeps data minimal: `artifacts` are capped at 8 entries of at most 120 characters each. Instrumentation artifacts are reduced to file names, so install-specific directories and app container IDs are not reported. The `root` and `jailbreak` artifacts are fixed system paths from the kit's own lists. No device identifiers are added. Your privacy and legal owners decide the lawful basis and retention for any link to a user.
+
+### Untested coverage
+
+These areas have no device or simulator verification yet. They stay listed here and in the release PR until verified.
+
+| Area | Not verified | Needs |
+| --- | --- | --- |
+| Android API 23–28 | `/proc/net/tcp` port probe, legacy behaviour | API ≤ 28 device |
+| Android API 33–35 | monitor and detectors on newer SELinux policy; thread, maps, and status readability | Android 13/14/15 device |
+| iOS Frida attach / spawn | agent visibility in the dyld image list and add-image callback; image name | jailbroken iPhone |
+| iOS Frida Gadget | load-command / renamed Gadget detection | re-signed build on a physical iPhone |
+| iOS jailbreak tweak runtimes | ElleKit / libhooker / Substitute image names | jailbroken iPhone |
+| iOS `P_TRACED` on device | Xcode attach/detach transitions (simulator lldb attach verified) | physical iPhone |
+| Android false positives | `memfdExec` / `anonRwx` with WebView or JS engines; `artSegments` on other API levels, ROMs, and other hookers | WebView test app; other devices |
+| Android classic Xposed / EdXposed, Frida Gadget (repackaged APK), Magisk DenyList | no setup on the device | dedicated test setups |
+| Android `trigger: manual` on a real change | observed only without a change (no duplicates) | rerun with a slower interval |
+
+Resolved by Phase 0: `memfdExec` ships with the `jit-cache` name exclusion, and `mountinfo` is in the `root` start and resume tier.
+
 ## Capabilities and platform constraints
 
 | Signal | Android | iOS |
 | --- | --- | --- |
-| Root / jailbreak | `su`, Magisk/KernelSU paths, test-key build tags | Common jailbreak files and URL schemes; scheme detection requires the app's `LSApplicationQueriesSchemes` allowlist |
-| Instrumentation | Frida/Xposed/LSPosed/Substrate mappings and Frida TCP listener ports | Loaded-image names for Frida/Substrate/Substitute/ElleKit/Xposed indicators |
-| Debugger | Runtime debugger attachment | `sysctl` traced-process flag |
+| Root / jailbreak | `su`, Magisk/KernelSU paths, test-key build tags, Magisk manager package, and Magisk/Zygisk mount markers in `/proc/self/mountinfo` (`mountinfo`; start and resume passes only) | Common jailbreak files and URL schemes (`paths`, `urlSchemes`); scheme detection requires the app's `LSApplicationQueriesSchemes` allowlist |
+| Instrumentation | Name tokens matched against the mapping file name only (case-insensitive): `frida-agent`, `frida-gadget`, `libfrida`, `libxposed`, `xposedbridge`, `lsposed`, `libsubstrate`, `libhooker`. Thread names (`gum-js-loop`, `pool-frida`) and executable private `memfd` mappings (`memfdExec`, `jit-cache` excluded). Supporting only: anonymous RWX count. Low confidence: libart text-segment split (`artSegments`, "ART hooked", verified on API 32 only). Frida TCP listener probe (`port`, API 28 and below only). Substrate and libhooker map terms are low-signal. LSPosed name terms are matched but LSPosed detection is not claimed (see [Limits](#limits-of-the-integrity-monitor)). | Loaded-image file names only (last path component, case-insensitive): `fridagadget`, `frida-gadget`, `frida-agent`, `libfrida`, `mobilesubstrate`, `cydiasubstrate`, `libsubstitute`, `substitute-loader`, `ellekit`, `libhooker`. There are no Xposed terms on iOS. Live image-load observer in the monitor (`dyldImageLoad`) |
+| Debugger | Runtime debugger attachment: JDWP (`jdwp`) and non-zero `TracerPid` (`tracerPid`). `tracerPid` is not a Frida signal: Frida's ptrace is visible only for about 0.2–0.4 s at attach. | `sysctl` traced-process flag `P_TRACED` (`pTraced`); Xcode's debugger sets it |
 | Signature integrity | SHA-256 of installed signing certificate compared with caller-supplied fingerprint | Detects absence of Mach-O code-signature command only; cannot expose/compare signing certificate fingerprint |
 | Emulator / simulator | Multiple build-property heuristics | Simulator build environment |
 | Accessibility / developer settings | Reports enabled external accessibility packages not caller-trusted, developer options, or ADB | Not exposed by the platform APIs used here |
-| Capture / display | Android 14+ screenshot callback and Android 15+ screen-recording state (`screenCaptureActive`, `source: screenRecordingCallback`) while the signal stream is listened to; secondary presentation displays (virtual displays included) | Screen recording/mirroring state (`screenCaptureActive`, `source`: `sceneCaptureState` on iOS 17+, else `screenIsCaptured`), screenshot event, and external display connection events |
+| Capture / display | Android 14+ screenshot callback and Android 15+ screen-recording state (`screenCaptureActive`, `source: screenRecordingCallback`) while `screenEvents` is listened to; secondary presentation displays (virtual displays included) | Screen recording/mirroring state (`screenCaptureActive`, `source`: `sceneCaptureState` on iOS 17+, else `screenIsCaptured`), screenshot event, and external display connection events |
 | Protection helper | Per-option, see [Screen protection](#screen-protection): `FLAG_SECURE` on the attached window, Android 15+ recording-time obscuring, Android 13+ Recents opt-out | Per-option: app-switcher blur, reactive capture cover, and opt-in best-effort capture blanking (unsupported by Apple) |
 
-Detection limitations and false positives are expected. A rooted device may hide artefacts; legitimate development builds, emulators (including their virtual presentation displays), accessibility services, screen sharing, and external displays can produce signals. Android screenshot event detection requires API 34+; screen-recording state events require API 35+ and `DETECT_SCREEN_RECORDING`. Known limitation (per Guardsquare research): the Android 15 recording callback can miss capture that does not go through the system recorder, such as scrcpy and `adb shell screenrecord`, and recordings that started before observation began. Generic Android screen-recording app detection is not available to ordinary apps and is not claimed. `FLAG_SECURE` works from min SDK 23.
+Detection limitations and false positives are expected. A rooted device may hide artefacts; legitimate development builds, emulators (including their virtual presentation displays), accessibility services, screen sharing, and external displays can produce signals. Android screenshot event detection requires API 34+; screen-recording state events require API 35+ and `DETECT_SCREEN_RECORDING`. Known limitation (per Guardsquare research): the Android 15 recording callback can miss capture that does not go through the system recorder, such as scrcpy and `adb shell screenrecord`, and recordings that started before observation began. Generic Android screen-recording app detection is not available to ordinary apps and is not claimed. `FLAG_SECURE` works from min SDK 24.
 
 ## Screen protection
 
@@ -219,6 +338,16 @@ The list is empty when every requested option was applied. Entries are `<option>
 - **Android recording callback gaps.** `obscureWhileCaptured` depends on the Android 15 recording callback and inherits its blind spots (scrcpy, `adb shell screenrecord`, recordings that started before observation). Use `blockCapture` for flows that must not be recorded.
 - **Out of scope.** Nothing here defeats an external camera, root/LSPosed/Frida modules that strip `FLAG_SECURE`, or jailbreak tweaks. Correlate with the `root` and `instrumentation` signals instead.
 
+## Migrating from 0.3.x to 0.4.0
+
+`stream` still works in 0.4.0 as a `@Deprecated` alias of `screenEvents`, and it is removed in 0.5.0. Native consumers of 0.3.x keep `startObserving` / `stopObserving`, which now cover screen events only. Toolchain and Android min SDK 24 changes are listed under [Requirements](#requirements).
+
+| 0.3.x | 0.4.0 |
+| --- | --- |
+| `kit.stream.listen(...)` | `kit.screenEvents.listen(...)` (`stream` still works, deprecated) |
+| Periodic `snapshot()` in app code | `kit.integrityEvents(IntegrityMonitorConfig(interval: ...)).listen(...)`; keep `snapshot()` for one-off reads |
+| `snapshot()` before a sensitive action | unchanged, or `checkIntegrityNow()` while monitoring |
+
 ## Migrating from 0.2.x
 
 `setScreenProtectionEnabled` is removed in 0.3.0 (the Flutter channel now answers `notImplemented` for it). Its boolean meant different things per platform, so there is no shorthand.
@@ -230,7 +359,7 @@ The list is empty when every requested option was applied. Entries are `<option>
 | `setScreenProtectionEnabled(false)` | `setScreenProtection(ScreenProtection.off)` |
 | Recommended for sensitive flows | `ScreenProtection(blockCapture: true, obscureWhileCaptured: true, obscureAppSwitcher: true)` and check `state.unavailable` |
 
-Android consumers must also move to AGP 8.6.0 or later (see Requirements).
+Android consumers must also move to AGP 9.0.1 or later, `compileSdk` 36, and min SDK 24 (see Requirements).
 
 ## Example
 
@@ -275,15 +404,15 @@ If `adb root` is unavailable on a rooted production build, start the server thro
 adb shell "su -c '/data/local/tmp/frida-server >/dev/null 2>&1 &'"
 ```
 
-Keep it running while the example is open and tap **Scan now**; this detector checks for Frida mappings and listeners on ports 27042/27043.
+Keep it running while the example is open and tap **Scan now**; this detector checks for Frida mappings and thread names. The listener probe on ports 27042/27043 runs only on API 28 and below, because Android 10 and later close `/proc/net` to apps.
 
 `adb root` alone may not trigger the `root` signal; that detector needs a recognized root artifact or build tag, as noted in the Android trigger table below.
 
-For Xposed/LSPosed, use a disposable image rooted with [Magisk](https://topjohnwu.github.io/Magisk/install.html) and follow the [LSPosed installation guide](https://github.com/LSPosed/LSPosed/wiki/How-to-use-it). Enable a compatible module and scope it only to the example package `com.mekari.mobile_hardening_kit_example`; force-stop and relaunch the example before scanning. The detector searches the app process mappings for `xposed`/`lsposed`, so installing the framework alone may not produce a finding if no matching mapping is exposed. Xposed-compatible frameworks apply to Android, not iOS.
+For Xposed/LSPosed, use a disposable image rooted with [Magisk](https://topjohnwu.github.io/Magisk/install.html) and follow the [LSPosed installation guide](https://github.com/LSPosed/LSPosed/wiki/How-to-use-it). Enable a compatible module and scope it only to the example package `com.mekari.mobile_hardening_kit_example`; force-stop and relaunch the example before scanning. The detector matches the file names of app process mappings against `libxposed`, `xposedbridge`, and `lsposed`, so installing the framework alone may not produce a finding if no matching mapping is exposed. Xposed-compatible frameworks apply to Android, not iOS.
 
 #### iOS: Frida
 
-On a jailbroken test device, install Frida using its [official iOS instructions](https://frida.re/docs/ios/) and confirm the host can see the device with `frida-ps -U`. On a non-jailbroken device, use a development-signed debuggable build; Frida's official workflow injects Gadget into debuggable apps and Xcode mounts the Developer Disk Image. Use `frida-ps -U` to find the sample process, then attach with `frida -U -n Runner`. Keep Gadget's loaded image name recognizable (for example, `FridaGadget`) because this detector checks loaded library names. Tap **Scan now**, then detach when finished. There is no Xposed setup for iOS.
+On a jailbroken test device, install Frida using its [official iOS instructions](https://frida.re/docs/ios/) and confirm the host can see the device with `frida-ps -U`. On a non-jailbroken device, use a development-signed debuggable build; Frida's official workflow injects Gadget into debuggable apps and Xcode mounts the Developer Disk Image. Use `frida-ps -U` to find the sample process, then attach with `frida -U -n Runner`. Keep Gadget's loaded image file name recognizable (for example, `FridaGadget`) because this detector matches loaded image file names against the tokens listed under Capabilities. Tap **Scan now**, then detach when finished. There is no Xposed setup for iOS.
 
 Stop Frida and disable/uninstall test modules after testing. Root/jailbreak and instrumentation findings remain heuristic: a tool may be installed yet not expose a name or path this kit recognizes.
 
@@ -298,7 +427,7 @@ flutter devices
 flutter run -d DEVICE_ID
 ```
 
-The example takes a snapshot on launch and subscribes to the event stream. After changing a device setting, tap **Scan now** to refresh snapshot findings. Screenshot and display changes arrive through the stream; keep the app open and leave the protection switch off while testing screenshot events. A signal may be absent when a platform or device cannot expose that check.
+The example takes a snapshot on launch and subscribes to `screenEvents`. After changing a device setting, tap **Scan now** to refresh snapshot findings. Screenshot and display changes arrive through `screenEvents`; keep the app open and leave the protection switch off while testing screenshot events. A signal may be absent when a platform or device cannot expose that check.
 
 ### Android
 
@@ -308,13 +437,15 @@ On the Android 17/API 37 emulator, **Scan now** reported `emulator` (`indicatorC
 
 ![Android 17 emulator showing emulator and devModeEnabled findings](docs/images/android-emulator-detection.jpg)
 
-On the rooted POCO F1 (Android 12/API 32), **Scan now** reported `root` with `managerPackage: "com.topjohnwu.magisk"` and, while Frida 17.18.0 was attached, `instrumentation` with `/memfd:frida-agent-64.so`. The screenshot below shows those findings alongside `accessibilityUnrecognized` and `devModeEnabled`.
+On the rooted POCO F1 (Android 12/API 32), **Scan now** reported `root` with `managerPackage: "com.topjohnwu.magisk"` and, while Frida 17.18.0 was attached, `instrumentation` with the artifact `/memfd:frida-agent-64.so`. The screenshot below predates the file-name-only artifacts, so it shows the full path form; current builds report `memfd:frida-agent-64.so`. It shows those findings alongside `accessibilityUnrecognized` and `devModeEnabled`.
 
 ![POCO F1 detecting root and Frida instrumentation](docs/images/poco-frida-instrumentation.jpg)
 
 LSPosed was active on the device, but its manager had no modules enabled or scoped for this app; this run did not produce an Xposed/LSPosed injection finding.
 
 On Android 12, SELinux denied the sample's `/proc/net/tcp` read, so `tracerPort` remained `0`; the Frida mapping was detected independently.
+
+Integrity monitor results on the same POCO F1 (Android 12, run from the app's own `untrusted_app` domain): with Frida attached at a 5 s interval, `instrumentation` was reported about 3 s after attach and cleared about 2 s after detach. A Frida spawn was caught on the start pass. The LSPosed module load appeared only as the low-confidence `artSegments` technique (`artTextSegments` 15), and it disappeared when the module was disabled. No interval passes ran while the app was backgrounded, and a `resume` pass ran on return. `trigger: manual` was observed only without a change, so it produced no duplicate events; a real change is not yet verified (see [Untested coverage](#untested-coverage)).
 
 ### Capabilities
 
@@ -324,7 +455,7 @@ On Android 12, SELinux denied the sample's `/proc/net/tcp` read, so `tracerPort`
 | `devModeEnabled` | Enable **Developer options** or **USB debugging** in Android Settings, return to the app, and scan. |
 | `debuggerAttach` | Attach an Android Studio **native** debugger to the running app process, then scan. The Dart/Flutter debugger alone may not attach a Java debugger. |
 | `accessibilityUnrecognized` | Enable an accessibility service such as TalkBack, then scan. The example supplies no trusted-package allowlist, so enabled external services are included in the signal metadata. Turn the service off afterward. |
-| `screenshotTaken` | On Android 14/API 34 or later, take a device screenshot while the example is foregrounded. The signal is delivered by the event stream, not by a later snapshot. |
+| `screenshotTaken` | On Android 14/API 34 or later, take a device screenshot while the example is foregrounded. The signal is delivered by `screenEvents`, not by a later snapshot. |
 | `externalDisplay` | Connect or cast to a secondary display that Android exposes as a presentation display. Emulator virtual presentation displays can also produce this finding. |
 | `signatureMismatch` | For a local-only test, pass a deliberately incorrect 64-character SHA-256 value to `MobileHardeningKit(expectedSigningCertificateSha256: ...)` in `example/flutter/lib/main.dart`, rebuild, and scan. Remove the test value afterward; do not commit it. |
 | `root`, `instrumentation` | These require a test environment with a recognized root artifact/build tag or instrumentation library/listener. There is no reliable standard-emulator toggle; use only an isolated, authorized test device. |
@@ -342,7 +473,7 @@ Make sure the test value differs from the app's actual signing-certificate finge
 
 Restore `MobileHardeningKit()` after the test; do not commit the test fingerprint.
 
-Android 15+ reports screen-recording state as `screenCaptureActive` (`source: screenRecordingCallback`) while the example's stream is subscribed; it can miss scrcpy, `adb shell screenrecord`, and recordings that started before observation. The Android screenshot callback only reports user screenshot events on API 34+ while the example's stream is subscribed.
+Android 15+ reports screen-recording state as `screenCaptureActive` (`source: screenRecordingCallback`) while the example's `screenEvents` listener is subscribed; it can miss scrcpy, `adb shell screenrecord`, and recordings that started before observation. The Android screenshot callback only reports user screenshot events on API 34+ while the example's `screenEvents` listener is subscribed.
 
 ### iOS
 
@@ -353,9 +484,9 @@ Run the example in the iOS Simulator or on a test device. The simulator reports 
 | Signal | Trigger |
 | --- | --- |
 | `debuggerAttach` | Run the app from Xcode using the Debug configuration, or attach Xcode's debugger to the running app, then tap **Scan now**. |
-| `screenshotTaken` | On a physical iPhone/iPad, take a screenshot with the hardware buttons while the example is foregrounded. The notification arrives through the event stream. |
+| `screenshotTaken` | On a physical iPhone/iPad, take a screenshot with the hardware buttons while the example is foregrounded. The notification arrives through `screenEvents`. |
 | `screenCaptureActive` | Start screen recording or screen mirroring from Control Center; stop it to observe the state change. `metadata.source` is `sceneCaptureState` on iOS 17+ and `screenIsCaptured` on iOS 15–16. |
-| `externalDisplay` | Connect an external display or start AirPlay mirroring, then observe the stream (or scan while it is connected). |
+| `externalDisplay` | Connect an external display or start AirPlay mirroring, then observe `screenEvents` (or scan while it is connected). |
 | `jailbreak`, `instrumentation` | These need a jailbroken or instrumented test environment exposing one of the implementation's recognized artifacts. They have no standard Simulator trigger. |
 
 The iOS `signatureMismatch` check only reports a missing Mach-O code-signature command; it cannot compare signing certificates. A normally signed iOS app cannot safely be made unsigned just to trigger this finding. iOS does not expose Android's accessibility/developer-setting checks.

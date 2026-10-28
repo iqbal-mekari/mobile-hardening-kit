@@ -6,11 +6,14 @@ import UIKit
 /// Client-side integrity and display observations. Reports only; never blocks a flow.
 /// Signals are heuristic and are not a security boundary. Call from the main thread.
 ///
-/// `startObserving`/`stopObserving` control event delivery; screen protection is opt-in
-/// and independent of event observation.
+/// `startObserving`/`stopObserving` control screen-event delivery; `startMonitoring`/
+/// `stopMonitoring` control the integrity monitor; screen protection is opt-in. All three are
+/// independent of each other.
 public final class MobileHardeningKit {
   private let probe: HardeningProbe
   private let secureContainer: SecureCaptureContainer
+  private let monitorEnvironment: MonitorEnvironment
+  private var monitor: IntegrityMonitor?
   private var handler: ((HardeningSignal) -> Void)?
   private var streamObservers: [NSObjectProtocol] = []
   private var protectionObservers: [NSObjectProtocol] = []
@@ -41,66 +44,133 @@ public final class MobileHardeningKit {
 
   init(
     probe: HardeningProbe,
-    secureContainer: SecureCaptureContainer = SystemSecureCaptureContainer()
+    secureContainer: SecureCaptureContainer = SystemSecureCaptureContainer(),
+    monitorEnvironment: MonitorEnvironment = .system
   ) {
     self.probe = probe
     self.secureContainer = secureContainer
+    self.monitorEnvironment = monitorEnvironment
   }
 
   deinit {
     stopObserving()
+    stopMonitoring()
     setScreenProtection(.off)
   }
 
+  /// The types `snapshot()` can report on iOS, in detection order.
+  static let detectionOrder: [HardeningSignalType] = [
+    .jailbreak, .instrumentation, .debuggerAttach, .emulator, .screenCaptureActive,
+    .externalDisplay, .signatureMismatch,
+  ]
+
+  private static let jailbreakPaths = [
+    "/Applications/Cydia.app", "/Applications/Sileo.app", "/Applications/Zebra.app",
+    "/Library/MobileSubstrate/MobileSubstrate.dylib", "/usr/libexec/ssh-keysign",
+    "/usr/bin/ssh", "/etc/apt", "/private/var/lib/apt/", "/var/jb",
+  ]
+
   /// Returns observations in detection order, at most one per type. Unsupported checks are omitted.
   public func snapshot() -> [HardeningSignal] {
-    var signals: [HardeningSignal] = []
-    func add(_ type: HardeningSignalType, _ metadata: [String: Any] = [:]) {
-      signals.append(HardeningSignal(type: type, metadata: metadata))
-    }
+    detect(Set(Self.detectionOrder))
+  }
 
-    let jailbreakPaths = [
-      "/Applications/Cydia.app", "/Applications/Sileo.app", "/Applications/Zebra.app",
-      "/Library/MobileSubstrate/MobileSubstrate.dylib", "/usr/libexec/ssh-keysign",
-      "/usr/bin/ssh", "/etc/apt", "/private/var/lib/apt/", "/var/jb",
-    ].filter(probe.fileExists(atPath:))
-    let suspiciousSchemes = ["cydia://", "sileo://"].filter(probe.canOpen(scheme:))
-    if !jailbreakPaths.isEmpty || !suspiciousSchemes.isEmpty {
-      add(
-        .jailbreak,
-        ["artifacts": Array(jailbreakPaths.prefix(8)), "urlSchemes": suspiciousSchemes])
+  /// Runs the detectors for `types` in detection order. `loads` receives the matching paths of
+  /// the current dyld image list and returns observed image loads to merge into `instrumentation`.
+  func detect(
+    _ types: Set<HardeningSignalType>, loads: (_ listed: [String]) -> [ImageLoad] = { _ in [] }
+  ) -> [HardeningSignal] {
+    Self.detectionOrder.filter(types.contains).compactMap { type in
+      metadata(for: type, loads: loads).map { HardeningSignal(type: type, metadata: $0) }
     }
+  }
 
-    let injectionNames = ["frida", "substrate", "substitute", "libhooker", "ellekit", "xposed"]
-    let injectedLibraries = probe.loadedImageNames()
-      .map { $0.lowercased() }
-      .filter { name in injectionNames.contains(where: name.contains) }
-      .map { String($0.suffix(120)) }
-    if !injectedLibraries.isEmpty {
-      add(.instrumentation, ["artifacts": Array(injectedLibraries.prefix(8))])
+  private func metadata(
+    for type: HardeningSignalType, loads: (_ listed: [String]) -> [ImageLoad]
+  ) -> [String: Any]? {
+    switch type {
+    case .jailbreak:
+      let paths = Self.jailbreakPaths.filter(probe.fileExists(atPath:))
+      let schemes = ["cydia://", "sileo://"].filter(probe.canOpen(scheme:))
+      let techniques = (paths.isEmpty ? [] : ["paths"]) + (schemes.isEmpty ? [] : ["urlSchemes"])
+      guard !techniques.isEmpty else { return nil }
+      return [
+        "artifacts": Array(paths.prefix(8)), "urlSchemes": schemes, "techniques": techniques,
+      ]
+    case .instrumentation:
+      let listed = injectedImagePaths()
+      return Self.instrumentationMetadata(listed: listed, loads: loads(listed))
+    case .debuggerAttach:
+      return probe.isDebuggerAttached() ? ["traced": true, "techniques": ["pTraced"]] : nil
+    case .emulator:
+      #if targetEnvironment(simulator)
+        return ["environment": "simulator"]
+      #else
+        return nil
+      #endif
+    case .screenCaptureActive:
+      return probe.isScreenCaptured() ? ["captured": true, "source": probe.captureSource] : nil
+    case .externalDisplay:
+      return probe.screenCount > 1 ? ["displayCount": probe.screenCount - 1] : nil
+    case .signatureMismatch:
+      // iOS does not expose its app-signing certificate fingerprint to sandboxed
+      // applications. Report only if the signed main executable lacks a code signature.
+      return probe.hasCodeSignature() ? nil : ["codeSignaturePresent": false]
+    default:
+      return nil
     }
+  }
 
-    if probe.isDebuggerAttached() {
-      add(.debuggerAttach, ["traced": true])
+  /// Artifact paths of loaded dyld images that match an injection needle, in dyld order. Only
+  /// matching names are copied into Swift strings.
+  private func injectedImagePaths() -> [String] {
+    var paths: [String] = []
+    probe.forEachLoadedImage { name in
+      guard InjectionNeedles.matches(name) else { return }
+      let path = InjectionNeedles.artifact(String(cString: name))
+      if !paths.contains(path) { paths.append(path) }
     }
+    return paths
+  }
 
-    #if targetEnvironment(simulator)
-      add(.emulator, ["environment": "simulator"])
-    #endif
+  /// `listed` images are `dyldImage` evidence; observed loads add `dyldImageLoad` when live, or
+  /// `dyldImage` when replayed at registration.
+  static func instrumentationMetadata(listed: [String], loads: [ImageLoad]) -> [String: Any]? {
+    let artifacts = listed + loads.map(\.path).filter { !listed.contains($0) }
+    guard !artifacts.isEmpty else { return nil }
+    var techniques: [String] = []
+    if !listed.isEmpty || loads.contains(where: { !$0.live }) { techniques.append("dyldImage") }
+    if loads.contains(where: \.live) { techniques.append("dyldImageLoad") }
+    return ["artifacts": Array(artifacts.prefix(8)), "techniques": techniques]
+  }
 
-    if probe.isScreenCaptured() {
-      add(.screenCaptureActive, ["captured": true, "source": probe.captureSource])
-    }
-    if probe.screenCount > 1 {
-      add(.externalDisplay, ["displayCount": probe.screenCount - 1])
-    }
+  /// Starts the runtime integrity monitor, replacing any running one. The first pass reports every
+  /// current finding as `detected`; later passes report only `detected`, `changed`, or `cleared`
+  /// findings, with `change` and `trigger` metadata. `handler` is called on the main thread.
+  ///
+  /// Monitoring is independent of `startObserving`. It only reports; it never blocks or exits.
+  public func startMonitoring(
+    _ config: IntegrityMonitorConfig = .init(), handler: @escaping (HardeningSignal) -> Void
+  ) {
+    stopMonitoring()
+    let monitor = IntegrityMonitor(
+      config: config, probe: probe, environment: monitorEnvironment,
+      detect: { [weak self] types, loads in self?.detect(types, loads: loads) ?? [] },
+      handler: handler)
+    self.monitor = monitor
+    monitor.start()
+  }
 
-    // iOS does not expose its app-signing certificate fingerprint to sandboxed
-    // applications. Report only if the signed main executable lacks a code signature.
-    if !probe.hasCodeSignature() {
-      add(.signatureMismatch, ["codeSignaturePresent": false])
-    }
-    return signals
+  /// Stops the integrity monitor. Safe to call when not monitoring.
+  public func stopMonitoring() {
+    monitor?.stop()
+    monitor = nil
+  }
+
+  /// Runs a full pass now; changes arrive on the monitoring handler with `trigger: manual`.
+  /// No-op when not monitoring.
+  public func checkIntegrityNow() {
+    monitor?.checkNow()
   }
 
   /// Applies `protection` and reports what was actually applied. Options not requested are
@@ -134,7 +204,10 @@ public final class MobileHardeningKit {
       center.addObserver(
         forName: UIApplication.userDidTakeScreenshotNotification, object: nil, queue: .main
       ) { [weak self] _ in
-        self?.handler?(HardeningSignal(type: .screenshotTaken, metadata: ["active": true]))
+        self?.handler?(
+          HardeningSignal(
+            type: .screenshotTaken,
+            metadata: ["active": true, "source": "userDidTakeScreenshotNotification"]))
       })
     streamObservers.append(
       center.addObserver(forName: UIScreen.didConnectNotification, object: nil, queue: .main) {
@@ -295,7 +368,10 @@ protocol HardeningProbe {
   func keyWindow() -> UIWindow?
   func fileExists(atPath path: String) -> Bool
   func canOpen(scheme: String) -> Bool
-  func loadedImageNames() -> [String]
+  /// Calls `body` with each loaded dyld image path; the pointer is valid only during the call.
+  func forEachLoadedImage(_ body: (UnsafePointer<CChar>) -> Void)
+  /// Delivers injection-matching dyld image loads on the main queue until cancelled.
+  func observeImageLoads(_ onLoad: @escaping ([ImageLoad]) -> Void) -> ImageLoadObservation
   func isDebuggerAttached() -> Bool
   func isScreenCaptured() -> Bool
   /// Calls `onChange` on the main queue whenever the capture state may have changed.
@@ -341,10 +417,15 @@ struct SystemProbe: HardeningProbe {
     return UIApplication.shared.canOpenURL(url)
   }
 
-  func loadedImageNames() -> [String] {
-    (0..<_dyld_image_count()).compactMap { index in
-      _dyld_get_image_name(index).map { String(cString: $0) }
+  func forEachLoadedImage(_ body: (UnsafePointer<CChar>) -> Void) {
+    for index in 0..<_dyld_image_count() {
+      // An image can unload between the count and the lookup.
+      _dyld_get_image_name(index).map(body)
     }
+  }
+
+  func observeImageLoads(_ onLoad: @escaping ([ImageLoad]) -> Void) -> ImageLoadObservation {
+    DyldImageLoadObserver.shared.observe(onLoad)
   }
 
   func isDebuggerAttached() -> Bool {
@@ -369,9 +450,23 @@ struct SystemProbe: HardeningProbe {
 
   func hasCodeSignature() -> Bool {
     guard let executable = Bundle.main.executableURL,
-      let data = try? Data(contentsOf: executable, options: .mappedIfSafe)
+      let data = Self.readHeaderAndLoadCommands(of: executable)
     else { return false }
     return Self.containsCodeSignature(data)
+  }
+
+  /// Upper bound on `sizeofcmds`; larger values are treated as malformed.
+  static let maxLoadCommandsSize = 4 << 20
+
+  /// Reads only the 64-bit Mach-O header and its load commands, not the whole executable.
+  static func readHeaderAndLoadCommands(of url: URL) -> Data? {
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+    defer { try? handle.close() }
+    guard let header = try? handle.read(upToCount: 32), header.count == 32 else { return nil }
+    let size = Int(header[20..<24].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
+    guard size <= maxLoadCommandsSize else { return nil }
+    // `read` returns nil at end of file; a short read leaves truncated commands for the parser.
+    return header + ((try? handle.read(upToCount: size)) ?? Data())
   }
 
   /// Scans little-endian 64-bit Mach-O load commands for `LC_CODE_SIGNATURE`.

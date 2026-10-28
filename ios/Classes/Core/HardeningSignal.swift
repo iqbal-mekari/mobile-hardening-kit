@@ -28,10 +28,13 @@ public struct HardeningSignal {
   }
 
   /// The `type` / `observedAt` / `metadata` map schema shared with the Flutter channel.
+  /// `observedAt` is UTC ISO 8601 with milliseconds, matching Android.
   public var dictionary: [String: Any] {
-    [
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return [
       "type": type.rawValue,
-      "observedAt": ISO8601DateFormatter().string(from: observedAt),
+      "observedAt": formatter.string(from: observedAt),
       "metadata": metadata,
     ]
   }

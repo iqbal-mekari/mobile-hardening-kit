@@ -1,5 +1,13 @@
 package com.mekari.mobile_hardening_kit
 
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
+
+internal fun isoTimestamp(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+  .apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date())
+
 /** Signal type identifiers. Values match the Dart `HardeningSignalType` names and the iOS core. */
 object HardeningSignalType {
   const val ROOT = "root"

@@ -44,3 +44,6 @@ build/
 coverage/
 .build/
 .swiftpm/
+
+# FVM Version Cache
+.fvm/

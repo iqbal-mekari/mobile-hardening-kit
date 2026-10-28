@@ -55,13 +55,18 @@ class RecentsActivityShadow : ShadowActivity() {
   }
 }
 
-private class FakeFiles(
+internal class FakeFiles(
   private val existing: Set<String> = emptySet(),
-  private val contents: Map<String, List<String>> = emptyMap()
+  val contents: MutableMap<String, List<String>> = mutableMapOf(),
+  val dirs: MutableMap<String, List<String>> = mutableMapOf()
 ) : FileAccess {
+  constructor(existing: Set<String> = emptySet(), contents: Map<String, List<String>>) :
+    this(existing, contents.toMutableMap(), mutableMapOf())
+
   override fun exists(path: String) = path in existing
   override fun readLines(path: String): List<String> =
     contents[path] ?: throw java.io.FileNotFoundException(path)
+  override fun list(path: String): List<String> = dirs[path] ?: throw java.io.FileNotFoundException(path)
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -154,13 +159,14 @@ class MobileHardeningKitTest {
     val signal = kit(FakeFiles(contents = mapOf("/proc/self/maps" to maps))).snapshot().single()
     assertEquals(HardeningSignalType.INSTRUMENTATION, signal.type)
     assertEquals(
-      listOf("/data/local/tmp/frida-agent-64.so", "/data/app/lsposed.so"),
+      listOf("frida-agent-64.so", "lsposed.so"),
       signal.metadata["artifacts"]
     )
     assertEquals(0, signal.metadata["tracerPort"])
   }
 
   @Test
+  @Config(sdk = [28])
   fun instrumentationFromFridaListeningPort() {
     val tcp = listOf(
       "  sl  local_address rem_address   st",
@@ -176,6 +182,7 @@ class MobileHardeningKitTest {
   }
 
   @Test
+  @Config(sdk = [28])
   fun listeningNonFridaPortIsIgnored() {
     val tcp = listOf(
       "  sl  local_address rem_address   st",
@@ -354,7 +361,7 @@ class MobileHardeningKitTest {
   }
 
   @Test
-  @Config(sdk = [23])
+  @Config(sdk = [24])
   fun blockCaptureTogglesFlagSecureAndRestoresOnDetach() {
     val (kit, activity) = attached()
     assertEquals(state(false, false, false), kit.setScreenProtection(ScreenProtection.OFF))
@@ -398,7 +405,7 @@ class MobileHardeningKitTest {
   }
 
   @Test
-  @Config(sdk = [23])
+  @Config(sdk = [24])
   fun below33SwitcherNeedsBlockCaptureAndBelow35WhileCapturedNeedsBlockCapture() {
     val (kit, _) = attached()
     assertEquals(state(false, false, false, "obscureAppSwitcher:apiLevel"), kit.setScreenProtection(switcher))
@@ -412,7 +419,7 @@ class MobileHardeningKitTest {
 
   @Test
   @Config(sdk = [32])
-  fun api32MatchesApi23Reporting() {
+  fun api32MatchesApi24Reporting() {
     val (kit, _) = attached()
     assertEquals(
       state(false, false, false, "obscureWhileCaptured:apiLevel", "obscureAppSwitcher:apiLevel"),

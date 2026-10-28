@@ -87,7 +87,10 @@ class MainActivity : Activity() {
       addView(header("Events"))
       addView(eventsView)
     }
-    return ScrollView(this).apply { addView(column, MATCH_PARENT, WRAP_CONTENT) }
+    return ScrollView(this).apply {
+      fitsSystemWindows = true // targetSdk 35+ draws edge-to-edge; keep content clear of the system bars.
+      addView(column, MATCH_PARENT, WRAP_CONTENT)
+    }
   }
 
   private fun header(title: String) = TextView(this).apply {

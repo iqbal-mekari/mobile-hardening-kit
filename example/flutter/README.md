@@ -38,10 +38,10 @@ No successful Google verification is claimed by this example documentation. A su
 
 `xposed_probe/` is a standalone Android Gradle project; it is not included in the Flutter app's Gradle build. The APK is a no-hook module using the legacy Xposed API, scoped only to `com.mekari.mobile_hardening_kit_example`. Its entry point writes a log line when LSPosed loads it; it does not modify or hook app behavior.
 
-From the repository root, build and install it:
+The probe pins Android Gradle Plugin 7.3.0, which needs a Gradle 7.x build. Do not build it with the Flutter example's Gradle wrapper (`example/flutter/android/gradlew`, Gradle 9.1.0): the build fails with `DependencyHandler.module(Object)`. Build it with a locally installed Gradle 7.6.x (from [gradle.org/releases](https://gradle.org/releases/)). From the repository root, build and install it:
 
 ```sh
-./example/flutter/android/gradlew -p example/flutter/xposed_probe :app:assembleDebug
+gradle -p example/flutter/xposed_probe :app:assembleDebug
 adb -s DEVICE_ID install -r example/flutter/xposed_probe/app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -51,7 +51,7 @@ In LSPosed Manager, enable **Mobile Hardening Xposed Probe** and confirm the Flu
 adb -s DEVICE_ID logcat -d -s LSPosed-Bridge
 ```
 
-The scanner reports instrumentation only when a recognized `xposed`/`lsposed` name appears in the app process mappings. On the POCO F1 (Android 12, LSPosed 1.9.2), LSPosed logged the probe loading in the example, but the scan did not report `instrumentation`; this is a detector limitation, not evidence that the framework was inactive.
+The scanner reports instrumentation only when a recognized file name (`libxposed`, `xposedbridge`, or `lsposed`) appears in the app process mappings. A bare `xposed` in a name is not matched. On the POCO F1 (Android 12, LSPosed 1.9.2), LSPosed logged the probe loading in the example, but the scan did not report `instrumentation`; this is a detector limitation, not evidence that the framework was inactive. With the 0.4.0 integrity monitor on the same device, loading the probe module produced only the low-confidence `artSegments` technique (`artTextSegments: 15`), which disappeared after the module was disabled; this is a heuristic, not LSPosed detection.
 
 After uninstalling the probe and rescanning, the POCO still reported no `instrumentation` finding. The active-module scan had also returned no finding, so this confirms the clean state but does not demonstrate a detection transition.
 

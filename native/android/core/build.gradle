@@ -1,5 +1,4 @@
 apply plugin: "com.android.library"
-apply plugin: "kotlin-android"
 apply plugin: "maven-publish"
 apply plugin: "jacoco"
 
@@ -9,20 +8,15 @@ version = findProperty("libraryVersion") ?: "0.2.0"
 
 android {
     namespace = "com.mekari.mobile_hardening_kit"
-    compileSdk = 35
+    compileSdk = 36
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8
-        allWarningsAsErrors = true
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     defaultConfig {
-        minSdk = 23
+        minSdk = 24
     }
 
     buildTypes {
@@ -47,6 +41,10 @@ android {
         warningsAsErrors = true
         abortOnError = true
         checkDependencies = true
+        // Toolchain versions are pinned by the Flutter 3.47.8 baseline, not "latest available".
+        // @RequiresApi needs androidx.annotation; the core has no dependencies, so private helpers keep
+        // @TargetApi and their callers check the API level.
+        disable += ["AndroidGradlePluginVersion", "UseRequiresApi"]
     }
 
     publishing {
@@ -56,14 +54,23 @@ android {
     }
 }
 
+// AGP 9 built-in Kotlin: compiler options live in the top-level kotlin block.
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        allWarningsAsErrors = true
+    }
+}
+
 dependencies {
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.robolectric:robolectric:4.14.1"
 }
 
 // Coverage gate: `./gradlew :core:testDebugUnitTest :core:coverageVerification`.
-def coverageClasses = fileTree(dir: "$buildDir/tmp/kotlin-classes/debug")
-def coverageExec = file("$buildDir/outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec")
+// Built-in Kotlin writes classes to an AGP intermediates dir; read it from the compile task (resolved lazily).
+def coverageClasses = files({ tasks.named("compileDebugKotlin").get().destinationDirectory })
+def coverageExec = layout.buildDirectory.file("outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec").get().asFile
 def coverageData = files(coverageExec)
 // JacocoCoverageVerification silently skips when no execution data exists; make that an error.
 def requireCoverageData = { ->

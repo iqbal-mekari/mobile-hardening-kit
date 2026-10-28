@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FLUTTER_VERSION: 3.24.0
+  FLUTTER_VERSION: 3.47.8
 
 jobs:
   go-sample:
@@ -40,6 +40,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check the fvm pins match FLUTTER_VERSION
+        run: |
+          for file in .fvmrc example/flutter/.fvmrc; do
+            grep -q "\"flutter\": \"$FLUTTER_VERSION\"" "$file" || { echo "$file does not pin Flutter $FLUTTER_VERSION"; exit 1; }
+          done
       - name: Install Flutter ${{ env.FLUTTER_VERSION }} from the official repository
         run: |
           git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
@@ -72,6 +77,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Validate Gradle wrapper checksums
+        uses: gradle/actions/wrapper-validation@v6
       - name: Lint, unit-test, and enforce coverage for the core
         working-directory: native/android
         run: ./gradlew :core:lintDebug :core:testDebugUnitTest :core:coverageVerification
@@ -101,6 +108,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Validate Gradle wrapper checksums
+        uses: gradle/actions/wrapper-validation@v6
       - name: Install Flutter ${{ env.FLUTTER_VERSION }} from the official repository
         run: |
           git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
@@ -139,7 +148,7 @@ jobs:
         run: xcodebuild test -scheme MobileHardeningKit -destination "platform=iOS Simulator,name=$DEVICE" -derivedDataPath "$RUNNER_TEMP/spm-dd" -enableCodeCoverage YES -resultBundlePath "$RUNNER_TEMP/spm.xcresult"
       - name: Enforce core line coverage (95%)
         run: |
-          for file in MobileHardeningKit.swift ScreenProtection.swift SecureCaptureContainer.swift; do
+          for file in MobileHardeningKit.swift ScreenProtection.swift SecureCaptureContainer.swift IntegrityMonitor.swift ImageLoadObserver.swift; do
             python3 tool/check_xccov.py "$RUNNER_TEMP/spm.xcresult" "$file" 95
           done
       - name: Build the native iOS sample (tagged sources from GitHub via SPM)

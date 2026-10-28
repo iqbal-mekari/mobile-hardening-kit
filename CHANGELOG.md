@@ -7,7 +7,7 @@ All notable changes to this project are documented here.
 ### Changed (breaking)
 - The iOS minimum deployment target is now 15.0 (was 13.0), the minimum of the Xcode 27 iPhoneOS SDK. This applies to the CocoaPods podspec and the SwiftPM package.
 - `setScreenProtectionEnabled` is removed from the Dart API, both native cores, and both Flutter adapters (the channel answers `notImplemented`). Use `setScreenProtection(ScreenProtection(...))`, which takes independent `blockCapture`, `obscureWhileCaptured`, and `obscureAppSwitcher` options and returns a `ScreenProtectionState`. See the README's "Migrating from 0.2.x" table: Android `true` becomes `blockCapture: true`, iOS `true` becomes `obscureAppSwitcher: true`, `false` becomes `ScreenProtection.off`.
-- The Android build requires Android Gradle Plugin 8.6.0, Gradle 8.7, and `compileSdk` 35 (AGP 7.x cannot read the SDK 35 `android.jar`). Consumers need AGP 8.6.0 or later, the tested combination; older AGP 8.x versions are unverified.
+- Toolchain floors follow the Flutter 3.47.8 baseline: Flutter 3.47.8 and Dart 3.13.7 (`flutter: '>=3.47.8'`, `sdk: '>=3.13.7 <4.0.0'`), Android min SDK 24 (was 23), Android Gradle Plugin 9.0.1, Gradle 9.1.0, Kotlin Gradle plugin 2.3.20, JDK 17 (Java/JVM target 17, was 1.8), and `compileSdk` 36. The AAR declares `minCompileSdk` 36, so consumers must compile against SDK 36 or later. The Android library and Flutter plugin use AGP 9 built-in Kotlin; Flutter apps can keep `android.builtInKotlin=false`.
 - The library manifest now also merges `android.permission.DETECT_SCREEN_RECORDING` (normal permission) into consuming apps.
 
 ### Added
@@ -21,9 +21,40 @@ All notable changes to this project are documented here.
 - README documentation of the per-platform protection mapping, `unavailable` reasons, per-window `FLAG_SECURE` limits, and migration from 0.2.x.
 - The Flutter sample demonstrates local kit findings alongside independently server-verified Google Play Integrity verdicts, with sample-owned OR, AND, and source-precedence decision policies. The Play SDK dependency is confined to the sample Android app; the kit API and dependencies are unchanged.
 - A Go sample verification backend validates Play tokens, request binding, package identity, and freshness using server-only Application Default Credentials. Its behavior tests run in CI; setup and trust limitations are documented in the sample READMEs.
+- Runtime integrity monitor: `integrityEvents(IntegrityMonitorConfig)` in Dart and `startMonitoring` / `stopMonitoring` in the Kotlin and Swift cores. It is opt-in, report-only, and foreground only; it re-checks on a schedule matched to when each tool can attach and reports only `detected`, `changed`, or `cleared` findings.
+- `checkIntegrityNow()` runs one monitor pass now (`trigger: manual`) in Dart, Kotlin, and Swift.
+- `screenEvents`, the screen-event stream (screenshot, capture, external display), on its own EventChannel, separate from integrity findings.
+- Integrity event metadata: `change`, `trigger`, and `techniques`, where `techniques` names the evidence source behind each finding.
+- Android detectors: thread names (`threadName`), `TracerPid` (`tracerPid`), executable private memfd mappings (`memfdExec`), anonymous RWX as supporting evidence only (`anonRwx`), libart text-segment split (`artSegments`, low confidence), Magisk/Zygisk mount markers (`mountinfo`), and the Frida listener port probe on API 28 and below (`port`).
+- iOS dyld image-load observer, registered once per process, emitting `trigger: imageLoad`, with `dyldImage`, `dyldImageLoad`, and `pTraced` evidence.
+- README sections for the integrity monitor (usage, timing table, `techniques` vocabulary, limits, untested coverage, data handling) and migration from 0.3.x.
 
 ### Changed
+- The Flutter example adopts the UIScene lifecycle, which Xcode 27 builds require, and no longer needs the Podfile deployment-target override (the Flutter 3.47.8 engine pod declares iOS 15.0). Flutter is pinned per project with fvm (`.fvmrc`).
 - The native Android sample (`example/android`) now consumes the released 0.2.0 AAR from the GitHub Release assets (anonymous, via the attached Gradle module metadata), and the native iOS sample (`example/ios`) consumes the tagged 0.2.0 sources through a remote SPM reference, instead of building the library from the working tree.
+- Instrumentation, debugger, and root/jailbreak metadata gains `techniques`, plus new keys: `anonRwxCount` and `artTextSegments` (Android instrumentation, whose `artifacts` may now include `thread:<name>` entries), `tracerPid` (Android debugger), and `mountMarkers` (Android root).
+- Instrumentation name matching uses the file name only (last path component), case-insensitively, against specific tokens. Android: `frida-agent`, `frida-gadget`, `libfrida`, `libxposed`, `xposedbridge`, `lsposed`, `libsubstrate`, `libhooker`. iOS: `fridagadget`, `frida-gadget`, `frida-agent`, `libfrida`, `mobilesubstrate`, `cydiasubstrate`, `libsubstitute`, `substitute-loader`, `ellekit`, `libhooker`. Bare `frida`, `substrate`, `gadget`, and `xposed` no longer match, so a library named `frida.so` or `xposed.jar` is not reported, and app paths containing words such as "Friday" no longer cause false positives.
+- Instrumentation `artifacts` contain file names only, never directory paths, on both platforms, at most 8 entries of at most 120 characters. Android memfd entries read like `memfd:frida-agent-64.so`, and thread entries are `thread:<name>`. Root and jailbreak `artifacts` remain fixed system paths from the kit's own lists.
+- The integrity monitor interval is clamped to [5 s, 24 h] in Dart, Android, and iOS.
+- Android: `snapshot()` through the Flutter plugin runs off the platform thread, so it no longer reads `/proc` on the main thread.
+- Android: the integrity monitor starts paused when no activity is attached. The start pass still runs, and the interval begins when an activity is attached or started.
+- Dart: each `integrityEvents()` call returns a stream bound to its own configuration and native session. Listening to it while a different session is active fails that subscription with a `StateError`, in addition to the `StateError` thrown at call time when a different session is already active.
+- The Android Frida listener port probe (`/proc/net/tcp`) runs only on API 28 and below. It is passive: there is no active `connect()` probe and no `INTERNET` permission.
+- Java-side Xposed `Class.forName` probes are removed. Phase 0 showed they do not reveal LSPosed, so the kit makes no LSPosed detection claim.
+- iOS `screenshotTaken` metadata gains `source: userDidTakeScreenshotNotification`; `active` is kept for compatibility.
+- iOS `observedAt` includes milliseconds, matching Android.
+
+### Deprecated
+- `MobileHardeningKit.stream` is deprecated in favour of `screenEvents`. It is removed in 0.5.0.
+
+### Fixed
+- Dart: a second listener on `stream` re-subscribed the native channel, and cancelling either listener stopped both. All listeners on all kit instances now share one native subscription for `screenEvents` and one for `integrityEvents`.
+- Android: an integrity monitor interval of `Long.MAX_VALUE` caused a busy loop. The interval is now clamped to [5 s, 24 h].
+- Android: the integrity monitor leaked the attached activity when it was destroyed without `detachActivity()`. Destroying the attached activity now pauses the monitor and unbinds it.
+- iOS: image loads that raced dyld callback registration were mislabelled as replayed. A load is now live unless its image was already loaded when observation began.
+
+### Security
+- Gradle wrapper properties pin `distributionSha256Sum` for the Gradle distribution in the native Android core and both Android samples. CI and the release workflow run `gradle/actions/wrapper-validation` to check wrapper checksums.
 
 ## [0.2.0] - 2026-09-30
 
