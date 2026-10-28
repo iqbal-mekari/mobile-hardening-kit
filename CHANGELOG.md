@@ -7,8 +7,7 @@ All notable changes to this project are documented here.
 ### Changed (breaking)
 - The iOS minimum deployment target is now 15.0 (was 13.0), the minimum of the Xcode 27 iPhoneOS SDK. This applies to the CocoaPods podspec and the SwiftPM package.
 - `setScreenProtectionEnabled` is removed from the Dart API, both native cores, and both Flutter adapters (the channel answers `notImplemented`). Use `setScreenProtection(ScreenProtection(...))`, which takes independent `blockCapture`, `obscureWhileCaptured`, and `obscureAppSwitcher` options and returns a `ScreenProtectionState`. See the README's "Migrating from 0.2.x" table: Android `true` becomes `blockCapture: true`, iOS `true` becomes `obscureAppSwitcher: true`, `false` becomes `ScreenProtection.off`.
-- The Android build requires Android Gradle Plugin 8.6.0, Gradle 8.7, and `compileSdk` 35 (AGP 7.x cannot read the SDK 35 `android.jar`). Consumers need AGP 8.6.0 or later, the tested combination; older AGP 8.x versions are unverified.
-- The library manifest now also merges `android.permission.DETECT_SCREEN_RECORDING` (normal permission) into consuming apps.
+- Toolchain floors follow the Flutter 3.47.8 baseline: Flutter 3.47.8 and Dart 3.13.7 (`flutter: '>=3.47.8'`, `sdk: '>=3.13.7 <4.0.0'`), Android min SDK 24 (was 23), Android Gradle Plugin 9.0.1, Gradle 9.1.0, Kotlin Gradle plugin 2.3.20, JDK 17 (Java/JVM target 17, was 1.8), and `compileSdk` 36. The AAR declares `minCompileSdk` 36, so consumers must compile against SDK 36 or later. The Android library and Flutter plugin use AGP 9 built-in Kotlin; Flutter apps can keep `android.builtInKotlin=false`.- The library manifest now also merges `android.permission.DETECT_SCREEN_RECORDING` (normal permission) into consuming apps.
 
 ### Added
 - `setScreenProtection` reports what the platform actually applied: `captureBlocked`, `obscuresWhileCaptured`, `obscuresAppSwitcher`, and an `unavailable` list of `<option>:<reason>` entries for requested options it could not apply.
@@ -23,6 +22,7 @@ All notable changes to this project are documented here.
 - A Go sample verification backend validates Play tokens, request binding, package identity, and freshness using server-only Application Default Credentials. Its behavior tests run in CI; setup and trust limitations are documented in the sample READMEs.
 
 ### Changed
+- The Flutter example adopts the UIScene lifecycle, which Xcode 27 builds require, and no longer needs the Podfile deployment-target override (the Flutter 3.47.8 engine pod declares iOS 15.0). Flutter is pinned per project with fvm (`.fvmrc`).
 - The native Android sample (`example/android`) now consumes the released 0.2.0 AAR from the GitHub Release assets (anonymous, via the attached Gradle module metadata), and the native iOS sample (`example/ios`) consumes the tagged 0.2.0 sources through a remote SPM reference, instead of building the library from the working tree.
 
 ## [0.2.0] - 2026-09-30

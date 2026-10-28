@@ -4,20 +4,9 @@ A dependency-light library that collects heuristic client-side integrity and dis
 
 ## Requirements
 
-- Flutter 3.24.0 or later
-- Android min SDK 23. Consumers need Android Gradle Plugin 8.6.0 or later and should compile against SDK 35 (the tested combination; older AGP 8.x versions are unverified, and AGP 7.x cannot read the SDK 35 `android.jar`).
-- iOS deployment target 15.0. With Xcode 27 (minimum deployment target 15.0), Flutter 3.24's engine pod still declares 12.0, so apps need to raise every pod target in their `Podfile`:
-
-  ```ruby
-  post_install do |installer|
-    installer.pods_project.targets.each do |target|
-      flutter_additional_ios_build_settings(target)
-      target.build_configurations.each do |config|
-        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      end
-    end
-  end
-  ```
+- Flutter 3.47.8 or later, Dart 3.13.7 or later (the package floors are `flutter: '>=3.47.8'` and `sdk: '>=3.13.7 <4.0.0'`).
+- Android min SDK 24. Consumers build with Android Gradle Plugin 9.0.1 or later, Gradle 9.1.0 or later, Kotlin Gradle plugin 2.3.20, and JDK 17, and compile against SDK 36 (the AAR declares `minCompileSdk` 36; this is the tested combination). The library uses AGP 9 built-in Kotlin; the Flutter plugin builds whether the app sets `android.builtInKotlin` to `true` or `false`.
+- iOS deployment target 15.0. Flutter apps built with Xcode 27 must use the UIScene lifecycle; Flutter 3.47.8 migrates an unmodified `AppDelegate` on `flutter build ios` (see [the Flutter UIScene migration guide](https://docs.flutter.dev/release/breaking-changes/uiscenedelegate)).
 - No third-party Dart runtime dependencies. The only package development dependency besides Flutter SDK test tools is the Flutter-maintained `flutter_lints` analyzer rules package.
 
 ## Add the package
@@ -39,7 +28,7 @@ The detection logic lives in two Flutter-free cores; the Flutter plugin only ada
 | Android | `native/android/core` (`MobileHardeningKit.kt`, `HardeningSignal.kt`) | `android/.../MobileHardeningKitPlugin.kt` |
 | iOS | `ios/Classes/Core` (`MobileHardeningKit.swift`, `HardeningSignal.swift`) | `ios/Classes/MobileHardeningKitPlugin.swift` |
 
-### Android (Kotlin/Java, min SDK 23)
+### Android (Kotlin/Java, min SDK 24)
 
 Each tagged release publishes the AAR to this repository's GitHub Packages (Maven) and attaches the AAR, POM, and Gradle metadata to the GitHub Release. GitHub Packages requires a token even for public packages: use a personal access token with `read:packages`, supplied as Gradle properties or environment variables (never commit it).
 
@@ -167,7 +156,7 @@ Set `expectedSigningCertificateSha256` to the signing certificate's SHA-256 dige
 | Capture / display | Android 14+ screenshot callback and Android 15+ screen-recording state (`screenCaptureActive`, `source: screenRecordingCallback`) while the signal stream is listened to; secondary presentation displays (virtual displays included) | Screen recording/mirroring state (`screenCaptureActive`, `source`: `sceneCaptureState` on iOS 17+, else `screenIsCaptured`), screenshot event, and external display connection events |
 | Protection helper | Per-option, see [Screen protection](#screen-protection): `FLAG_SECURE` on the attached window, Android 15+ recording-time obscuring, Android 13+ Recents opt-out | Per-option: app-switcher blur, reactive capture cover, and opt-in best-effort capture blanking (unsupported by Apple) |
 
-Detection limitations and false positives are expected. A rooted device may hide artefacts; legitimate development builds, emulators (including their virtual presentation displays), accessibility services, screen sharing, and external displays can produce signals. Android screenshot event detection requires API 34+; screen-recording state events require API 35+ and `DETECT_SCREEN_RECORDING`. Known limitation (per Guardsquare research): the Android 15 recording callback can miss capture that does not go through the system recorder, such as scrcpy and `adb shell screenrecord`, and recordings that started before observation began. Generic Android screen-recording app detection is not available to ordinary apps and is not claimed. `FLAG_SECURE` works from min SDK 23.
+Detection limitations and false positives are expected. A rooted device may hide artefacts; legitimate development builds, emulators (including their virtual presentation displays), accessibility services, screen sharing, and external displays can produce signals. Android screenshot event detection requires API 34+; screen-recording state events require API 35+ and `DETECT_SCREEN_RECORDING`. Known limitation (per Guardsquare research): the Android 15 recording callback can miss capture that does not go through the system recorder, such as scrcpy and `adb shell screenrecord`, and recordings that started before observation began. Generic Android screen-recording app detection is not available to ordinary apps and is not claimed. `FLAG_SECURE` works from min SDK 24.
 
 ## Screen protection
 
@@ -230,7 +219,7 @@ The list is empty when every requested option was applied. Entries are `<option>
 | `setScreenProtectionEnabled(false)` | `setScreenProtection(ScreenProtection.off)` |
 | Recommended for sensitive flows | `ScreenProtection(blockCapture: true, obscureWhileCaptured: true, obscureAppSwitcher: true)` and check `state.unavailable` |
 
-Android consumers must also move to AGP 8.6.0 or later (see Requirements).
+Android consumers must also move to AGP 9.0.1 or later, `compileSdk` 36, and min SDK 24 (see Requirements).
 
 ## Example
 

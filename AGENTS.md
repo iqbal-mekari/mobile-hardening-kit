@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`mobile_hardening_kit` is a Flutter plugin that gathers client-side integrity, display, and capture signals on Android and iOS. It reports heuristic observations only; it must not block flows or be treated as a security boundary. Flutter 3.24.0 is pinned in CI; Android minimum SDK is 23 and iOS deployment target is 15.0.
+`mobile_hardening_kit` is a Flutter plugin that gathers client-side integrity, display, and capture signals on Android and iOS. It reports heuristic observations only; it must not block flows or be treated as a security boundary. Flutter 3.47.8 (Dart 3.13.7) is pinned in CI and in each Flutter project's `.fvmrc`; Android minimum SDK is 24 and iOS deployment target is 15.0.
 
 ## Architecture & Data Flow
 
@@ -74,7 +74,7 @@ On macOS, build the iOS example with `cd example/flutter && flutter build ios --
 
 ## Runtime/Tooling Preferences
 
-Use Flutter/Dart and Pub; the CI workflow installs Flutter 3.24.0 directly from the official Flutter repository. There is no Node, Bun, or npm; the only scripts are the two small Python coverage gates in `tool/`. iOS builds and XCTest require Xcode/CocoaPods on macOS; Android builds use each project's Gradle wrapper (`native/android`, `example/android`, `example/flutter/android`); the Android toolchain is AGP 8.6.0, Gradle 8.7, and `compileSdk` 35. The Flutter example depends on the package through `path: ../../`.
+Use Flutter/Dart and Pub; the CI workflow installs Flutter 3.47.8 directly from the official Flutter repository, and fails if `.fvmrc` or `example/flutter/.fvmrc` pin a different version (keep both in sync with `FLUTTER_VERSION` in the workflows; use `fvm flutter` locally). Package floors are `flutter: '>=3.47.8'` and `sdk: '>=3.13.7 <4.0.0'`; all other dependencies are pinned exactly (no `^`). There is no Node, Bun, or npm; the only scripts are the two small Python coverage gates in `tool/`. iOS builds and XCTest require Xcode/CocoaPods on macOS; Android builds use each project's Gradle wrapper (`native/android`, `example/android`, `example/flutter/android`); the Android toolchain is AGP 9.0.1 with built-in Kotlin (no `kotlin-android` plugin; compiler options in `kotlin { compilerOptions { ... } }`), Gradle 9.1.0, Kotlin Gradle plugin 2.3.20, JDK 17 (Java/JVM target 17), and `compileSdk` 36. The Flutter example keeps `android.newDsl=false` (Flutter Gradle plugin requirement) and enables `android.builtInKotlin`. The Flutter example depends on the package through `path: ../../`.
 
 Build outputs, `.dart_tool/`, Android local properties/Gradle caches, CocoaPods, and generated Flutter plugin files are ignored; edit their source configuration instead. The root package lockfile is intentionally ignored for a reusable library, while the example's lockfile is retained.
 
