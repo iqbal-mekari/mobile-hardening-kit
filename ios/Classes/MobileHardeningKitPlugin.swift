@@ -17,10 +17,14 @@ public class MobileHardeningKitPlugin: NSObject, FlutterPlugin, FlutterStreamHan
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "snapshot": result(kit.snapshot().map(\.dictionary))
-    case "setScreenProtectionEnabled":
+    case "setScreenProtection":
       let arguments = call.arguments as? [String: Any]
-      kit.setScreenProtectionEnabled(arguments?["enabled"] as? Bool ?? false)
-      result(nil)
+      func option(_ key: String) -> Bool { arguments?[key] as? Bool ?? false }
+      let protection = ScreenProtection(
+        blockCapture: option("blockCapture"),
+        obscureWhileCaptured: option("obscureWhileCaptured"),
+        obscureAppSwitcher: option("obscureAppSwitcher"))
+      result(kit.setScreenProtection(protection).toMap())
     default: result(FlutterMethodNotImplemented)
     }
   }
