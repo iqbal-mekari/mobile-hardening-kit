@@ -48,7 +48,7 @@ class IntegrityMonitorConfig {
     this.interval = const Duration(seconds: 30), // ASSUMPTION: tuned in Phase 0
     this.checkOnResume = true,
   });
-  /// Runtime-attach checks while in the foreground; clamped to >= 5 s.
+  /// Runtime-attach checks while in the foreground; clamped to [5 s, 24 h].
   final Duration interval;
   final bool checkOnResume;
 }
@@ -86,8 +86,8 @@ Both getters return a single cached broadcast stream per kit instance (fixes tod
 ### 4.4 Contract details (binding for all implementers)
 
 **Native config and API**
-- Kotlin: `data class IntegrityMonitorConfig(val intervalMs: Long = 30_000, val checkOnResume: Boolean = true)`; effective interval `max(intervalMs, 5_000)`. `MobileHardeningKit.startMonitoring(config: IntegrityMonitorConfig, listener: HardeningSignalListener, hardeningConfig: HardeningConfig = HardeningConfig())`, `stopMonitoring()`, `checkIntegrityNow()`. Main thread; passes run on one background executor; results delivered on the main thread. Starting while monitoring replaces the previous session (stop, then start).
-- Swift: `public struct IntegrityMonitorConfig { public var interval: TimeInterval = 30; public var checkOnResume = true }` (clamped to ≥ 5 s); `startMonitoring(_ config: IntegrityMonitorConfig = .init(), handler: @escaping (HardeningSignal) -> Void)`, `stopMonitoring()`, `checkIntegrityNow()`. Same replace semantics.
+- Kotlin: `data class IntegrityMonitorConfig(val intervalMs: Long = 30_000, val checkOnResume: Boolean = true)`; effective interval clamped to `[5_000, 86_400_000]` ms (5 s to 24 h). `MobileHardeningKit.startMonitoring(config: IntegrityMonitorConfig, listener: HardeningSignalListener, hardeningConfig: HardeningConfig = HardeningConfig())`, `stopMonitoring()`, `checkIntegrityNow()`. Main thread; passes run on one background executor; results delivered on the main thread. Starting while monitoring replaces the previous session (stop, then start).
+- Swift: `public struct IntegrityMonitorConfig { public var interval: TimeInterval = 30; public var checkOnResume = true }` (effective interval clamped to [5 s, 24 h], NaN → 5 s); `startMonitoring(_ config: IntegrityMonitorConfig = .init(), handler: @escaping (HardeningSignal) -> Void)`, `stopMonitoring()`, `checkIntegrityNow()`. Same replace semantics.
 
 **Channel**
 - EventChannel `mobile_hardening_kit/integrity_events`; listen args `{intervalMs: int, checkOnResume: bool, expectedSigningCertificateSha256?: String, trustedAccessibilityPackages: [String]}` (iOS ignores the last two). Method `checkIntegrityNow` → null. Missing/invalid args → defaults.
@@ -129,22 +129,22 @@ Interval passes run only the runtime-attach tier (instrumentation + debugger) to
 | Anonymous RWX (`anonRwx`) | count of unnamed `rwxp` mappings > 0; supporting evidence only, never reported alone as Frida | Verified: 0 at baseline/control, 3–6 with Frida, 3–5 **remain after detach**. WebView/JS-engine false positives untested (§10) |
 | ART text split (`artSegments`) | number of `r-xp` segments of `libart.so` > 1 → `instrumentation` (low confidence, "ART hooked") | Verified on API 32 only: 1 → 15 with an LSPosed module loaded, back to 1 when disabled. Other hookers (e.g. Frida Java bridge) may also split it (inference) |
 | Magisk/Zygisk mounts (`mountinfo`) | `/proc/self/mountinfo` markers (`magisk`, `zygisk`, `/adb/modules`) → `root`; start/resume tier only (1139 lines) | Verified readable (run-as) and present on the rooted device, including for unscoped apps; DenyList-unmounted apps untested |
-| Narrow maps terms | `gadget` → `frida-gadget`; keep `substrate` / `libhooker` as low-signal; keep `frida` | `frida-agent` maps match verified; `gadget` too broad (inference) |
+| Narrow maps terms | `gadget` → `frida-gadget`; keep `substrate` / `libhooker` as low-signal; keep `frida`. Hook terms are matched on the mapped **file name** (last path component) only, with specific tokens, never on the directory path; `artifacts` hold file names only (≤ 120 chars), not full paths | `frida-agent` maps match verified; `gadget` too broad (inference). Review fix: a directory or app name containing a term (e.g. `TGIFridays.app`) must not match, and container paths are quasi-identifiers |
 | Port probe | `/proc/net/tcp` only on API ≤ 28 (D6) | Denied on API 32 (verified) |
 | ~~Legacy Xposed probes~~ | dropped (D7) | Verified: `ClassNotFoundException` on app and system loaders with an LSPosed module loaded; no xposed frames in stack traces |
-| Threading | monitor passes on a single background executor, results posted to the main thread | `/proc` reads on main thread risk jank/StrictMode (inference) |
-| Lifecycle | interval paused when the attached activity stops; resume pass on start | uses existing `attachActivity` / `detachActivity` |
+| Threading | monitor passes on a single background executor, results posted to the main thread; the one-shot snapshot also runs off the main thread in the Android adapter | `/proc` reads on main thread risk jank/StrictMode (inference) |
+| Lifecycle | interval paused when the attached activity stops; resume pass on start; the monitor starts paused when no activity is attached and runs once one attaches | uses existing `attachActivity` / `detachActivity` |
 | Test seams | extend `FileAccess` with `list(dir)`; injectable scheduler and clock | Robolectric + `ShadowLooper` |
 
 ### 5.3 iOS (`ios/Classes/Core`)
 
 | Change | Detail | Evidence |
 |---|---|---|
-| dyld image-load observer | `_dyld_register_func_for_add_image` registered **once per process** (no unregister API), **from a background queue** (replay is synchronous on the registering thread, ~30 ms for ~600 images), gated by an atomic enabled flag and a weak sink. Callback does only `dladdr` + `strcasestr` on C strings, enqueues hits to a private serial queue, emits `trigger: imageLoad`. | Simulator-measured (§11): synchronous full replay before the call returns; a second registration replays again; live callbacks run on the `dlopen` caller's thread (can be main); `dladdr` gives absolute paths; no deadlock calling dyld APIs inside |
-| Replay de-dup | hits delivered before the register call returns belong to the `start` pass (flag flipped after return), not `imageLoad` events | Simulator-measured |
+| dyld image-load observer | `_dyld_register_func_for_add_image` registered **once per process** (no unregister API), **from a background queue** (replay is synchronous on the registering thread, ~30 ms for ~600 images), gated by an atomic enabled flag and a weak sink. Callback does only `dladdr` + `strrchr`/`strcasestr` on C strings against a needle table built eagerly (before registration, so no lazy init or allocation under the loader lock), enqueues hits to a private serial queue, emits `trigger: imageLoad`. | Simulator-measured (§11): synchronous full replay before the call returns; a second registration replays again; live callbacks run on the `dlopen` caller's thread (can be main); `dladdr` gives absolute paths; no deadlock calling dyld APIs inside |
+| Replay de-dup | a header address in a snapshot taken just before registration is replay and belongs to the `start` pass; any other header is live (`imageLoad`), even if a `dlopen` on another thread lands before the register call returns. Images loaded between the snapshot and the registration are replayed but reported live (they did load after observation began). Fixes the earlier flag-flip gap (review L3) | Simulator-measured replay; snapshot is a bounded header-pointer list, linear scan under the lock |
 | Interval/resume | `P_TRACED` + image-name scan + jailbreak paths (resume) | Existing detectors |
-| `DYLD_INSERT_LIBRARIES` | `getenv` check at start | Inference; likely stripped for signed apps, low value |
-| Narrow terms | `substrate` → `mobilesubstrate` / `cydiasubstrate`; add `fridagadget` | Inference |
+| `DYLD_INSERT_LIBRARIES` | not implemented (Phase 0: unset; low value) | Inference; likely stripped for signed apps |
+| Narrow terms | matched case-insensitively on the **last path component** (file name) only, never the directory or app bundle name, with specific tokens: `fridagadget`, `frida-gadget`, `frida-agent`, `libfrida`, `mobilesubstrate`, `cydiasubstrate`, `libsubstitute`, `substitute-loader`, `ellekit`, `libhooker`. `xposed` is dropped on iOS (Android-only). The polling scan uses the same rule. Artifacts are the lowercased file name only (≤ 120 chars) | Review fix: a bare `frida` matched `TGIFridays.app` and every file inside it; container paths hold the app UUID (quasi-identifier) |
 | Cheaper scans | C-string matching instead of allocating/lowercasing every image name; `hasCodeSignature()` reads header + load commands only | Simulator-measured: C-string pass 1.2–3 ms vs 3–48 ms for the current String approach (554–627 images) |
 | Lifecycle | interval paused while not active; resume pass on `didBecomeActive` | existing notifications |
 | Test seams | `HardeningProbe` gains `observeImageLoads` and an injectable timer | hostless XCTest |
@@ -157,10 +157,10 @@ Open on iOS: whether Frida's attach-mode agent appears in the dyld image list or
 |---|---|---|
 | Detection evasion | Attached Frida can hook `/proc` reads, `sysctl`, `dladdr`, or the monitor itself; renamed agents/ports evade name matching | Documented as a race; README guidance: report to backend, treat missing heartbeats as suspicious, tighten interval on sensitive screens |
 | False positives | memfd/JIT and WebView executable mappings; Xcode/`debugserver` sets `P_TRACED`; legit SDK swizzling | memfd check gated on Phase 0 baseline; no swizzle/symbol-hook checks in 0.4.0; `techniques` lets consumers weight evidence |
-| Performance / battery | Interval scans of maps (hundreds of lines), thread lists, dyld images | Runtime tier only on interval; foreground only; ≥5 s clamp; Phase 0 per-pass timing on POCO F1 and simulator |
+| Performance / battery | Interval scans of maps (hundreds of lines), thread lists, dyld images | Runtime tier only on interval; foreground only; interval clamped to [5 s, 24 h]; Phase 0 per-pass timing on POCO F1 and simulator |
 | Platform stability | dyld callback runs under a loader lock; heavy work inside can deadlock | Copy-and-enqueue only; no ObjC/Swift allocation-heavy work, UIKit, or logging inside the callback |
 | Lifecycle | Single listener slot per core; shared teardown; adapter detach must cover the new channel | Separate `IntegrityMonitor` object with its own listener; adapter tests for teardown of both channels |
-| Privacy (UU PDP) | Findings forwarded to a backend may become personal data when linked to a user | Data minimisation kept: artifact lists capped at 8 × 120 chars, own-process paths only, no device identifiers added; README note for consumers |
+| Privacy (UU PDP) | Findings forwarded to a backend may become personal data when linked to a user | Data minimisation kept: artifact lists capped at 8 × 120 chars, file names only (no directories), own-process images only, no device identifiers added; README note for consumers |
 | App Review | dyld add-image callback | Public, non-deprecated header API; ASSUMPTION low rejection risk |
 | Compatibility | Dart enum strictness | D4: no new types |
 
