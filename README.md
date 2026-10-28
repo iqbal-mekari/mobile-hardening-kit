@@ -6,7 +6,18 @@ A dependency-light library that collects heuristic client-side integrity and dis
 
 - Flutter 3.24.0 or later
 - Android min SDK 23. Consumers need Android Gradle Plugin 8.6.0 or later and should compile against SDK 35 (the tested combination; older AGP 8.x versions are unverified, and AGP 7.x cannot read the SDK 35 `android.jar`).
-- iOS deployment target 15.0
+- iOS deployment target 15.0. With Xcode 27 (minimum deployment target 15.0), Flutter 3.24's engine pod still declares 12.0, so apps need to raise every pod target in their `Podfile`:
+
+  ```ruby
+  post_install do |installer|
+    installer.pods_project.targets.each do |target|
+      flutter_additional_ios_build_settings(target)
+      target.build_configurations.each do |config|
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      end
+    end
+  end
+  ```
 - No third-party Dart runtime dependencies. The only package development dependency besides Flutter SDK test tools is the Flutter-maintained `flutter_lints` analyzer rules package.
 
 ## Add the package
