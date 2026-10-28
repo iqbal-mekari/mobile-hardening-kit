@@ -15,6 +15,7 @@ Replace the boolean `setScreenProtectionEnabled` with an explicit, per-capabilit
 | D1 | Breaking redesign; remove `setScreenProtectionEnabled` | The bool means different things per platform (Android `FLAG_SECURE` vs iOS app-switcher blur). Any shorthand mapping either keeps that inconsistency or silently changes iOS behaviour. Pre-1.0, consumers are our own samples. |
 | D2 | iOS gets two separate opt-ins: supported reactive cover **and** best-effort secure-field blanking (off by default) | Apple provides no prevention API; the secure-field technique is undocumented and fragile, so it must never be implied by another flag. |
 | D3 | Ship Android 15 recording callback, iOS `sceneCaptureState`, Android per-window guidance in the same release | Closes known detection gaps found in research. |
+| D5 | Upgrade Android toolchain to AGP 8 / Gradle 8 to reach `compileSdk = 35` | Phase 0 found AGP 7.3.0/7.4.2 aapt2 cannot load the android-35 `android.jar`; reflection and deferral were rejected. Minimum consumer AGP becomes a documented breaking requirement of 0.3.0. |
 | D4 | No third-party dependency (ScreenProtectorKit, no_screenshot) | Closed binary / duplicated scope; kit stays in-house and dependency-light. no_screenshot (BSD-style) is a **reference only** for iOS edge cases; no code is copied. |
 
 ## 3. Non-goals
