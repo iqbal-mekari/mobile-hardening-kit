@@ -1,7 +1,5 @@
 # Repository Guidelines
 
-**Classification: INTERNAL**
-
 ## Project Overview
 
 `mobile_hardening_kit` is a Flutter plugin that gathers client-side integrity, display, and capture signals on Android and iOS. It reports heuristic observations only; it must not block flows or be treated as a security boundary. Flutter 3.47.8 (Dart 3.13.7) is pinned in CI and in each Flutter project's `.fvmrc`; Android minimum SDK is 24 and iOS deployment target is 15.0.

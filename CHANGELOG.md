@@ -1,7 +1,5 @@
 # Changelog
 
-**Classification: INTERNAL**
-
 All notable changes to this project are documented here.
 
 ## [Unreleased]
@@ -34,7 +32,7 @@ All notable changes to this project are documented here.
 ### Changed
 - The Flutter example adopts the UIScene lifecycle, which Xcode 27 builds require, and no longer needs the Podfile deployment-target override (the Flutter 3.47.8 engine pod declares iOS 15.0). Flutter is pinned per project with fvm (`.fvmrc`).
 - The native Android sample (`example/android`) now consumes the released 0.2.0 AAR from the GitHub Release assets (anonymous, via the attached Gradle module metadata), and the native iOS sample (`example/ios`) consumes the tagged 0.2.0 sources through a remote SPM reference, instead of building the library from the working tree.
-- Instrumentation, debugger, and root/jailbreak metadata gains `techniques`, plus new keys: `artifacts`, `tracerPort`, `anonRwxCount`, and `artTextSegments` (Android instrumentation), `tracerPid` (Android debugger), and `mountMarkers` (Android root).
+- Instrumentation, debugger, and root/jailbreak metadata gains `techniques`, plus new keys: `anonRwxCount` and `artTextSegments` (Android instrumentation, whose `artifacts` may now include `thread:<name>` entries), `tracerPid` (Android debugger), and `mountMarkers` (Android root).
 - The `gadget` map term is narrowed to `frida-gadget`. On iOS, the `substrate` term is narrowed to `mobilesubstrate` and `cydiasubstrate`, and `fridagadget` is added.
 - The Android Frida listener port probe (`/proc/net/tcp`) runs only on API 28 and below. It is passive: there is no active `connect()` probe and no `INTERNET` permission.
 - Java-side Xposed `Class.forName` probes are removed. Phase 0 showed they do not reveal LSPosed, so the kit makes no LSPosed detection claim.
@@ -45,7 +43,7 @@ All notable changes to this project are documented here.
 - `MobileHardeningKit.stream` is deprecated in favour of `screenEvents`. It is removed in 0.5.0.
 
 ### Fixed
-- Dart: a second listener on `stream` re-subscribed the native channel, and cancelling either listener stopped both. Each kit instance now shares one cached broadcast stream for `screenEvents` and one for `integrityEvents`.
+- Dart: a second listener on `stream` re-subscribed the native channel, and cancelling either listener stopped both. All listeners on all kit instances now share one native subscription for `screenEvents` and one for `integrityEvents`.
 
 ## [0.2.0] - 2026-09-30
 

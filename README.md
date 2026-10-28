@@ -1,7 +1,5 @@
 # Mobile Hardening Kit
 
-**Classification: INTERNAL**
-
 A dependency-light library that collects heuristic client-side integrity and display signals through in-house Kotlin and Swift cores. It can be used directly from native Android and iOS apps, or through the Flutter plugin, which is a thin wrapper over the same native cores. **The kit reports signals; it never blocks a user flow or makes a product risk decision.** Client-side checks are bypassable and are not a security boundary.
 
 ## Requirements
@@ -188,7 +186,7 @@ await subscription.cancel();
 
 ### Shared subscription and `StateError`
 
-All listeners on one kit instance share one native monitor session. While it has listeners, calling `integrityEvents` with a different `IntegrityMonitorConfig`, or from an instance with a different `expectedSigningCertificateSha256` or `trustedAccessibilityPackages`, throws a `StateError`. After the last listener cancels, a new configuration is allowed. `screenEvents` (and the deprecated `stream`) share one native subscription per instance the same way: cancelling one listener never stops another.
+All listeners, on every kit instance in the process, share one native monitor session. While it has listeners, calling `integrityEvents` with a different `IntegrityMonitorConfig`, or from an instance with a different `expectedSigningCertificateSha256` or `trustedAccessibilityPackages`, throws a `StateError`. After the last listener cancels, a new configuration is allowed. `screenEvents` (and the deprecated `stream`) share one process-wide native subscription the same way: cancelling one listener never stops another.
 
 ### Timing: when each tool can enter the process
 
