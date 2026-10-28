@@ -1,5 +1,7 @@
 # Changelog
 
+**Classification: INTERNAL**
+
 All notable changes to this project are documented here.
 
 ## [Unreleased]
@@ -7,7 +9,8 @@ All notable changes to this project are documented here.
 ### Changed (breaking)
 - The iOS minimum deployment target is now 15.0 (was 13.0), the minimum of the Xcode 27 iPhoneOS SDK. This applies to the CocoaPods podspec and the SwiftPM package.
 - `setScreenProtectionEnabled` is removed from the Dart API, both native cores, and both Flutter adapters (the channel answers `notImplemented`). Use `setScreenProtection(ScreenProtection(...))`, which takes independent `blockCapture`, `obscureWhileCaptured`, and `obscureAppSwitcher` options and returns a `ScreenProtectionState`. See the README's "Migrating from 0.2.x" table: Android `true` becomes `blockCapture: true`, iOS `true` becomes `obscureAppSwitcher: true`, `false` becomes `ScreenProtection.off`.
-- Toolchain floors follow the Flutter 3.47.8 baseline: Flutter 3.47.8 and Dart 3.13.7 (`flutter: '>=3.47.8'`, `sdk: '>=3.13.7 <4.0.0'`), Android min SDK 24 (was 23), Android Gradle Plugin 9.0.1, Gradle 9.1.0, Kotlin Gradle plugin 2.3.20, JDK 17 (Java/JVM target 17, was 1.8), and `compileSdk` 36. The AAR declares `minCompileSdk` 36, so consumers must compile against SDK 36 or later. The Android library and Flutter plugin use AGP 9 built-in Kotlin; Flutter apps can keep `android.builtInKotlin=false`.- The library manifest now also merges `android.permission.DETECT_SCREEN_RECORDING` (normal permission) into consuming apps.
+- Toolchain floors follow the Flutter 3.47.8 baseline: Flutter 3.47.8 and Dart 3.13.7 (`flutter: '>=3.47.8'`, `sdk: '>=3.13.7 <4.0.0'`), Android min SDK 24 (was 23), Android Gradle Plugin 9.0.1, Gradle 9.1.0, Kotlin Gradle plugin 2.3.20, JDK 17 (Java/JVM target 17, was 1.8), and `compileSdk` 36. The AAR declares `minCompileSdk` 36, so consumers must compile against SDK 36 or later. The Android library and Flutter plugin use AGP 9 built-in Kotlin; Flutter apps can keep `android.builtInKotlin=false`.
+- The library manifest now also merges `android.permission.DETECT_SCREEN_RECORDING` (normal permission) into consuming apps.
 
 ### Added
 - `setScreenProtection` reports what the platform actually applied: `captureBlocked`, `obscuresWhileCaptured`, `obscuresAppSwitcher`, and an `unavailable` list of `<option>:<reason>` entries for requested options it could not apply.
@@ -20,10 +23,29 @@ All notable changes to this project are documented here.
 - README documentation of the per-platform protection mapping, `unavailable` reasons, per-window `FLAG_SECURE` limits, and migration from 0.2.x.
 - The Flutter sample demonstrates local kit findings alongside independently server-verified Google Play Integrity verdicts, with sample-owned OR, AND, and source-precedence decision policies. The Play SDK dependency is confined to the sample Android app; the kit API and dependencies are unchanged.
 - A Go sample verification backend validates Play tokens, request binding, package identity, and freshness using server-only Application Default Credentials. Its behavior tests run in CI; setup and trust limitations are documented in the sample READMEs.
+- Runtime integrity monitor: `integrityEvents(IntegrityMonitorConfig)` in Dart and `startMonitoring` / `stopMonitoring` in the Kotlin and Swift cores. It is opt-in, report-only, and foreground only; it re-checks on a schedule matched to when each tool can attach and reports only `detected`, `changed`, or `cleared` findings.
+- `checkIntegrityNow()` runs one monitor pass now (`trigger: manual`) in Dart, Kotlin, and Swift.
+- `screenEvents`, the screen-event stream (screenshot, capture, external display), on its own EventChannel, separate from integrity findings.
+- Integrity event metadata: `change`, `trigger`, and `techniques`, where `techniques` names the evidence source behind each finding.
+- Android detectors: thread names (`threadName`), `TracerPid` (`tracerPid`), executable private memfd mappings (`memfdExec`), anonymous RWX as supporting evidence only (`anonRwx`), libart text-segment split (`artSegments`, low confidence), Magisk/Zygisk mount markers (`mountinfo`), and the Frida listener port probe on API 28 and below (`port`).
+- iOS dyld image-load observer, registered once per process, emitting `trigger: imageLoad`, with `dyldImage`, `dyldImageLoad`, and `pTraced` evidence.
+- README sections for the integrity monitor (usage, timing table, `techniques` vocabulary, limits, untested coverage, data handling) and migration from 0.3.x.
 
 ### Changed
 - The Flutter example adopts the UIScene lifecycle, which Xcode 27 builds require, and no longer needs the Podfile deployment-target override (the Flutter 3.47.8 engine pod declares iOS 15.0). Flutter is pinned per project with fvm (`.fvmrc`).
 - The native Android sample (`example/android`) now consumes the released 0.2.0 AAR from the GitHub Release assets (anonymous, via the attached Gradle module metadata), and the native iOS sample (`example/ios`) consumes the tagged 0.2.0 sources through a remote SPM reference, instead of building the library from the working tree.
+- Instrumentation, debugger, and root/jailbreak metadata gains `techniques`, plus new keys: `artifacts`, `tracerPort`, `anonRwxCount`, and `artTextSegments` (Android instrumentation), `tracerPid` (Android debugger), and `mountMarkers` (Android root).
+- The `gadget` map term is narrowed to `frida-gadget`. On iOS, the `substrate` term is narrowed to `mobilesubstrate` and `cydiasubstrate`, and `fridagadget` is added.
+- The Android Frida listener port probe (`/proc/net/tcp`) runs only on API 28 and below. It is passive: there is no active `connect()` probe and no `INTERNET` permission.
+- Java-side Xposed `Class.forName` probes are removed. Phase 0 showed they do not reveal LSPosed, so the kit makes no LSPosed detection claim.
+- iOS `screenshotTaken` metadata gains `source: userDidTakeScreenshotNotification`; `active` is kept for compatibility.
+- iOS `observedAt` includes milliseconds, matching Android.
+
+### Deprecated
+- `MobileHardeningKit.stream` is deprecated in favour of `screenEvents`. It is removed in 0.5.0.
+
+### Fixed
+- Dart: a second listener on `stream` re-subscribed the native channel, and cancelling either listener stopped both. Each kit instance now shares one cached broadcast stream for `screenEvents` and one for `integrityEvents`.
 
 ## [0.2.0] - 2026-09-30
 
