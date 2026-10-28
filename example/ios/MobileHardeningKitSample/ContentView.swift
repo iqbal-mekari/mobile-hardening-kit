@@ -11,6 +11,9 @@ struct ContentView: View {
         Section {
           Button("Scan now") { model.scan() }
           Toggle("Screen protection (app-switcher blur)", isOn: $model.screenProtection)
+          Text(verbatim: "\(model.protectionState)").font(.caption).foregroundColor(.secondary)
+          Toggle("Integrity monitor", isOn: $model.monitoring)
+          Button("Check integrity now") { model.checkIntegrityNow() }
         }
         Section(header: Text("Snapshot")) {
           if model.snapshot.isEmpty {
@@ -23,6 +26,12 @@ struct ContentView: View {
             Text("Waiting for capture/display events...")
           }
           ForEach(Array(model.events.enumerated()), id: \.offset) { row(for: $0.element) }
+        }
+        Section(header: Text("Integrity findings")) {
+          if model.findings.isEmpty {
+            Text("Monitor off or no findings.")
+          }
+          ForEach(Array(model.findings.enumerated()), id: \.offset) { row(for: $0.element) }
         }
       }
       .navigationTitle("Hardening Kit Sample")

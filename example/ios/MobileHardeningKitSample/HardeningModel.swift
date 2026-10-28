@@ -7,8 +7,32 @@ final class HardeningModel: ObservableObject {
 
   @Published private(set) var snapshot: [HardeningSignal] = []
   @Published private(set) var events: [HardeningSignal] = []
+  @Published private(set) var protectionState: ScreenProtectionState = .off
+  @Published private(set) var findings: [HardeningSignal] = []
   @Published var screenProtection = false {
-    didSet { kit.setScreenProtectionEnabled(screenProtection) }
+    didSet {
+      // Best-effort on iOS: shows what the platform actually applied, including `unavailable`.
+      protectionState = kit.setScreenProtection(
+        screenProtection
+          ? ScreenProtection(obscureWhileCaptured: true, obscureAppSwitcher: true) : .off)
+    }
+  }
+  @Published var monitoring = false {
+    didSet {
+      if monitoring {
+        // Report-only, foreground only; findings are delivered on the main queue.
+        kit.startMonitoring(IntegrityMonitorConfig(interval: 30)) { [weak self] signal in
+          guard let self else { return }
+          self.findings = Array(([signal] + self.findings).prefix(20))
+        }
+      } else {
+        kit.stopMonitoring()
+      }
+    }
+  }
+
+  func checkIntegrityNow() {
+    kit.checkIntegrityNow()
   }
 
   func scan() {
