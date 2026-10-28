@@ -1,6 +1,6 @@
 # Runtime integrity monitor and split event streams (0.4.0)
 
-Branch: `feat/integrity-monitor` (stacked on `feat/screen-protection-redesign`; rebase onto `main` after PR #3 merges) · Target release: `0.4.0` · Status: approved 2026-10-28; Phase 0 complete, implementation not started
+Branch: `feat/integrity-monitor` (stacked on `feat/screen-protection-redesign`; rebase onto `main` after PR #3 merges) · Target release: `0.4.0` · Status: implemented on branch (Phases 0–5, T, review fixes); Android device-verified on API 32; release pending
 
 ## 1. Goal
 
@@ -250,10 +250,10 @@ Resolved 2026-10-28: D2 approved (deprecate `stream` in 0.4.0); default interval
 | iOS Frida Gadget | load-command / renamed Gadget detection | re-signed build on a physical iPhone |
 | iOS jailbreak tweak runtimes | ElleKit / libhooker / Substitute image names | jailbroken iPhone |
 | iOS `P_TRACED` on device | Xcode attach/detach transitions (simulator lldb attach verified) | physical iPhone |
-| Android `untrusted_app` readability | Phase 0 read app state as root and via `run-as` (`runas_app` domain), not from the real app domain | confirmed in Phase 2 on the POCO F1 |
 | Android false positives | `memfdExec` / `anonRwx` with WebView or JS engines; `artSegments` on other API levels, ROMs, and with other hookers | WebView test app; other devices |
 | Android classic Xposed / EdXposed, Frida Gadget (repackaged APK), Magisk DenyList | no setup on the device | dedicated test setups |
-| Per-pass cost on Android | not measured in Phase 0 | measured in Phase 2 on the POCO F1 |
+| Android `trigger: manual` on a real change | observed only without a change (no duplicates); the interval pass won the race | rerun with a 30 s interval |
+| Release-build cost; Android ≠ 12 | cost measured on a debug build only | release build; other devices |
 
 Resolved by Phase 0: `memfdExec` ships with the `jit-cache` name exclusion (clean baseline); `mountinfo` ships in the `root` start/resume tier.
 
@@ -286,3 +286,24 @@ Notes: LSPosed Manager (parasitic) launches with `am start -c org.lsposed.manage
 - `P_TRACED` false under `xcodebuild test`; true while lldb is attached to a simulator process, cleared after detach (via `ps`). `DYLD_INSERT_LIBRARIES` unset.
 
 Plan changes from these findings: §2 D7, §4.3 techniques, §5.2 and §5.3 tables, §10 untested coverage.
+
+### Phase 6 device verification (2026-10-28, commit `979ca06`)
+
+POCO F1, Android 12/API 32, app domain `u:r:untrusted_app` (SELinux enforcing), driven with adb through the example's monitor UI at a 5 s interval. Evidence kept outside the repo (session scratchpad `phase6-android/`).
+
+| Scenario | Result |
+|---|---|
+| Clean start | `root` (`managerPackage`, `mountinfo`), `accessibilityUnrecognized`, `devModeEnabled`; no screen/display types, no `instrumentation` |
+| Frida attach mid-run | `instrumentation` `detected`, `trigger: interval`, ~3 s after attach; techniques `maps`, `threadName`, `memfdExec`, `anonRwx` |
+| Frida detach | `cleared` ~2 s after detach; a `changed` fired earlier while attached when `pool-frida` exited |
+| Check now, no change | no event (no duplicates); `manual` on a real change not shown |
+| Background ≥ 10 s | no interval events; `resume` pass reported the attach made while backgrounded |
+| Frida spawn | caught on the `start` pass (no `pool-frida` thread in spawn mode) |
+| LSPosed module scoped to the app | `instrumentation` with `artSegments` + `anonRwx`, `artTextSegments: 15`; gone when the module is disabled |
+
+Per-pass cost (debug build, background thread, before the regex hoist): runtime tier median 114 ms / max 134 ms (n = 30); full tier median 197 ms / max 260 ms (n = 7).
+
+### Security review (Opus, 2026-10-28) and fixes
+
+No high findings. Fixed: file-name-only matching with specific tokens on both platforms (false positives on paths such as `TGIFridays`), interval clamp [5 s, 24 h] (Android `Long.MAX_VALUE` busy loop), Android monitor starts paused without an activity, Android Flutter `snapshot()` off the platform thread, per-call Dart integrity sessions (a second kit could drop the signing check), regex hoisting, file-name-only artifacts, activity unbind on destroy, eager dyld needles outside the loader lock, header-snapshot replay/live classification, Gradle `distributionSha256Sum` + wrapper validation in CI/release.
+
