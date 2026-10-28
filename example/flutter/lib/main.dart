@@ -108,7 +108,7 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
   @override
   void initState() {
     super.initState();
-    _subscription = _kit.stream.listen(
+    _subscription = _kit.screenEvents.listen(
       (signal) {
         if (mounted) setState(() => _streamSignals.add(signal));
       },
