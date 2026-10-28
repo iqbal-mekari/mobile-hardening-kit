@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 
 import 'src/hardening_signal.dart';
+import 'src/screen_protection.dart';
 
 export 'src/hardening_signal.dart';
+export 'src/screen_protection.dart';
 
 /// Client-side integrity observations for Android and iOS.
 ///
@@ -53,12 +55,29 @@ class MobileHardeningKit {
       .where((event) => event is Map)
       .map((event) => HardeningSignal.fromMap(event as Map<Object?, Object?>));
 
-  /// Enables or disables per-window screenshot protection.
+  /// Applies opt-in screen protection and reports what the platform applied.
   ///
-  /// Android applies FLAG_SECURE to the attached Flutter window. iOS obscures
-  /// the app snapshot while backgrounded. Disabled by default.
-  Future<void> setScreenProtectionEnabled(bool enabled) => _methods
-          .invokeMethod<void>('setScreenProtectionEnabled', <String, Object?>{
-        'enabled': enabled,
-      });
+  /// Each call replaces the previous request; pass [ScreenProtection.off] to
+  /// clear it. Requested options the platform cannot apply are listed in
+  /// [ScreenProtectionState.unavailable] as `<option>:<reason>`.
+  ///
+  /// Android: `blockCapture` applies FLAG_SECURE to the attached Flutter
+  /// window (screenshots, recordings, casting, Recents); it is per window, so
+  /// dialogs and separate native windows need their own handling.
+  /// `obscureWhileCaptured` uses the API 35+ screen recording callback and
+  /// `obscureAppSwitcher` the API 33+ Recents screenshot opt-out.
+  ///
+  /// iOS: `obscureAppSwitcher` blurs the app snapshot while inactive and
+  /// `obscureWhileCaptured` covers the window while capture is active (reactive,
+  /// first frames may leak). `blockCapture` is best-effort and not supported by
+  /// Apple; never treat it as guaranteed.
+  Future<ScreenProtectionState> setScreenProtection(
+      ScreenProtection protection) async {
+    final result = await _methods.invokeMapMethod<Object?, Object?>(
+        'setScreenProtection', protection.toMap());
+    if (result == null) {
+      throw const FormatException('setScreenProtection returned no state');
+    }
+    return ScreenProtectionState.fromMap(result);
+  }
 }
