@@ -361,7 +361,7 @@ class MobileHardeningKitTest {
   }
 
   @Test
-  @Config(sdk = [23])
+  @Config(sdk = [24])
   fun blockCaptureTogglesFlagSecureAndRestoresOnDetach() {
     val (kit, activity) = attached()
     assertEquals(state(false, false, false), kit.setScreenProtection(ScreenProtection.OFF))
@@ -405,7 +405,7 @@ class MobileHardeningKitTest {
   }
 
   @Test
-  @Config(sdk = [23])
+  @Config(sdk = [24])
   fun below33SwitcherNeedsBlockCaptureAndBelow35WhileCapturedNeedsBlockCapture() {
     val (kit, _) = attached()
     assertEquals(state(false, false, false, "obscureAppSwitcher:apiLevel"), kit.setScreenProtection(switcher))
@@ -419,7 +419,7 @@ class MobileHardeningKitTest {
 
   @Test
   @Config(sdk = [32])
-  fun api32MatchesApi23Reporting() {
+  fun api32MatchesApi24Reporting() {
     val (kit, _) = attached()
     assertEquals(
       state(false, false, false, "obscureWhileCaptured:apiLevel", "obscureAppSwitcher:apiLevel"),

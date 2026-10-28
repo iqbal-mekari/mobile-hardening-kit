@@ -2,15 +2,14 @@ group = "com.mekari.mobile_hardening_kit"
 version = "1.0-SNAPSHOT"
 
 buildscript {
-    ext.kotlin_version = "1.8.22"
     repositories {
         google()
         mavenCentral()
     }
 
     dependencies {
-        classpath("com.android.tools.build:gradle:8.6.0")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
+        classpath("com.android.tools.build:gradle:9.0.1")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.20")
     }
 }
 
@@ -21,25 +20,19 @@ allprojects {
     }
 }
 
+// Built-in Kotlin (AGP 9): no kotlin-android plugin. Apps that opt out (android.builtInKotlin=false)
+// get KGP applied to this module by the Flutter Gradle plugin.
 apply plugin: "com.android.library"
-apply plugin: "kotlin-android"
 apply plugin: "jacoco"
 
 android {
-    if (project.android.hasProperty("namespace")) {
-        namespace = "com.mekari.mobile_hardening_kit"
-    }
+    namespace = "com.mekari.mobile_hardening_kit"
 
-    compileSdk = 35
+    compileSdk = 36
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8
-        allWarningsAsErrors = true
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     buildTypes {
@@ -63,16 +56,24 @@ android {
     lint {
         warningsAsErrors = true
         abortOnError = true
+        // Same rationale as native/android/core/build.gradle (pinned toolchain; no androidx.annotation).
+        disable += ["AndroidGradlePluginVersion", "UseRequiresApi"]
     }
 
     sourceSets {
-        main.java.srcDirs += "src/main/kotlin"
         // Native core shared with the standalone native/android library.
-        main.java.srcDirs += "../native/android/core/src/main/kotlin"
+        main.kotlin.srcDirs("../native/android/core/src/main/kotlin")
     }
 
     defaultConfig {
-        minSdk = 23
+        minSdk = 24
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        allWarningsAsErrors = true
     }
 }
 
@@ -84,8 +85,11 @@ dependencies {
 
 // Adapter-only coverage gate (the shared native core is gated in native/android).
 // Run from example/flutter/android: ./gradlew :mobile_hardening_kit:testDebugUnitTest :mobile_hardening_kit:coverageVerification
-def coverageExec = file("$buildDir/outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec")
-def adapterClasses = fileTree(dir: "$buildDir/tmp/kotlin-classes/debug", includes: ["**/MobileHardeningKitPlugin*.class"])
+def coverageExec = layout.buildDirectory.file("outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec").get().asFile
+// Read the class output from the compile task (built-in Kotlin and KGP use different dirs), resolved lazily.
+def adapterClasses = files({ tasks.named("compileDebugKotlin").get().destinationDirectory }).asFileTree.matching {
+    include "**/MobileHardeningKitPlugin*.class"
+}
 def requireCoverageData = { ->
     if (!coverageExec.exists()) throw new GradleException("No coverage data at $coverageExec")
 }

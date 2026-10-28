@@ -409,7 +409,6 @@ class MobileHardeningKit internal constructor(
     )
   }
 
-  @TargetApi(34)
   private fun registerScreenshotCallback(target: Activity) {
     if (Build.VERSION.SDK_INT < 34 || listener == null || screenshotCallback != null) return
     val callback = Activity.ScreenCaptureCallback {
@@ -419,10 +418,10 @@ class MobileHardeningKit internal constructor(
     screenshotCallback = callback
   }
 
-  @TargetApi(34)
   private fun unregisterScreenshotCallback() {
+    if (Build.VERSION.SDK_INT < 34) return // Never registered below API 34.
     val callback = screenshotCallback as? Activity.ScreenCaptureCallback ?: return
-    if (Build.VERSION.SDK_INT >= 34) activity?.unregisterScreenCaptureCallback(callback)
+    activity?.unregisterScreenCaptureCallback(callback)
     screenshotCallback = null
   }
 
