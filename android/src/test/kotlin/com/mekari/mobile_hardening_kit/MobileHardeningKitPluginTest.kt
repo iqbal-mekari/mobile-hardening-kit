@@ -102,7 +102,7 @@ class MobileHardeningKitPluginTest {
     val signal = (result.success as List<*>).single() as Map<*, *>
     assertEquals("root", signal["type"])
     assertTrue(signal["observedAt"] is String)
-    assertEquals(mapOf("testKeys" to true), signal["metadata"])
+    assertEquals(mapOf("testKeys" to true, "techniques" to listOf("buildTags")), signal["metadata"])
   }
 
   @Test
