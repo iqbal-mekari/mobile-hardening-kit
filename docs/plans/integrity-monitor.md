@@ -95,7 +95,7 @@ Both getters return a single cached broadcast stream per kit instance (fixes tod
 - EventChannel `mobile_hardening_kit/integrity_events`; listen args `{intervalMs: int, checkOnResume: bool, expectedSigningCertificateSha256?: String, trustedAccessibilityPackages: [String]}` (iOS ignores the last two). Method `checkIntegrityNow` → null. Missing/invalid args → defaults.
 
 **Passes and tiers**
-- `full` tier = every `snapshot()` detector. `runtime` tier = `instrumentation` + `debuggerAttach` only.
+- `full` tier = every `snapshot()` detector **except** the screen/display types `screenCaptureActive` and `externalDisplay`, which belong to `screenEvents` only (amended 2026-10-28 after Phase 2/3 both diffed them). `runtime` tier = `instrumentation` + `debuggerAttach` only.
 - `start` (full) on subscribe; `resume` (full) when the app returns to the foreground if `checkOnResume`; `interval` (runtime) while foregrounded; `manual` (full) from `checkIntegrityNow()`; iOS `imageLoad` (instrumentation only).
 - Diffing compares only the types the pass covers: a runtime pass never clears `root`. Key = type + sorted `techniques` + sorted `artifacts`. Same key → nothing emitted; different key → `changed`; new type → `detected`; type gone → `cleared` (with the last metadata). The first pass emits every finding as `detected`.
 
