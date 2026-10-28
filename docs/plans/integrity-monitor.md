@@ -24,6 +24,7 @@ The kit stays report-only: it never blocks, kills, or calls anti-debug APIs (`pt
 | D4 | No new signal types. New evidence maps to existing `instrumentation` / `debuggerAttach`; metadata gains `techniques` and monitor fields (§4.3). | Older Dart decoders throw `FormatException` on unknown types (`lib/src/hardening_signal.dart:31-35`); avoids a lockstep upgrade. |
 | D5 | Pure Kotlin / Swift only. NDK-based checks (inline-hook prologue diff, `ArtMethod` entrypoint checks, raw-syscall `/proc` reads) are a separate decision, not in 0.4.0. | Adds a native toolchain, ABI matrix, and per-OS-version fragility to a dependency-light kit. |
 | D6 | No `INTERNET` permission. The Frida port probe via `/proc/net/tcp` runs only on API ≤ 28; no active `connect()` probe. | `/proc/net` is closed to apps from Android 10 (verified on API 32; Android 10 privacy changes). A library must not merge `INTERNET` into consumer manifests for a heuristic. |
+| D8 (added 2026-10-28) | 0.4.0 adopts the Mekari "Migration Guide Flutter 3.47.8 2026" constraints (Confluence MOBI 51349291514): Flutter 3.47.8, Dart 3.13.7 (package floors `flutter >=3.47.8`, `sdk >=3.13.7 <4.0.0`), Gradle 9.1.0, AGP 9.0.1, Kotlin 2.3.20, build JDK 17, Android minSdk 24, iOS 15.0, exact dependency pins (only SDK constraints may be ranges), `.fvmrc` pinned to 3.47.8 in every Flutter project. | Org-wide toolchain baseline; Dart 3.13.7 fixes a TLS MITM advisory (GHSA-frr6-h895-5pxp, per the guide). minSdk 24 and the toolchain floors are breaking for consumers. |
 | D7 | LSPosed is reported only through a low-confidence heuristic (`artSegments`, §5.2), documented as verified on one device; no "LSPosed detection" claim. Java-side `Class.forName` Xposed probes are dropped. | Phase 0 (§11): with a module loaded, LSPosed 1.9.2 leaves no name in maps/threads/fds/mountinfo/environ and hides `XposedBridge` from `Class.forName` on both loaders; only libart's text-segment split was observed. |
 
 ## 3. Non-goals
@@ -191,6 +192,14 @@ Detectors per §5.2, `IntegrityMonitor` (scheduler, diffing, tiers, lifecycle pa
 
 Detectors per §5.3, `IntegrityMonitor`, single-registration image-load observer, schema alignment. XCTest on iOS 18.6 / 26.4 / 27.0 simulators; add new files to the `check_xccov.py` loop in `.github/workflows/ci.yml` (≥95%). `swift-format lint --strict`.
 
+### Phase T — Toolchain upgrade (D8)
+
+- `pubspec.yaml` (package + example): SDK floors per D8; exact dev-dependency pins; `fvm use 3.47.8` in the root and `example/flutter` (`.fvmrc` committed, `.fvm/` ignored).
+- Android (`native/android`, `android/`, `example/flutter/android`, `example/android`): Gradle 9.1.0 wrappers, AGP 9.0.1, Kotlin 2.3.20, JDK 17, minSdk 24; follow the AGP 9 migration (built-in Kotlin, DSL changes) from official Android docs; Robolectric/Jacoco versions verified on Maven Central, never guessed.
+- iOS: Flutter 3.47.8 with Xcode 27; drop the `FLUTTER_XCODE_ARCHS` workaround if no longer needed; migrate the example to the UIScene lifecycle if Flutter 3.47.8 supports it (fixes the iOS 27 simulator crash noted in PR #3).
+- CI: Flutter 3.47.8, JDK 17. Docs: requirements in README, AGENTS.md, CHANGELOG.
+- Gates: every existing CI gate re-run green on the new toolchain, including the `apk --release` build that could not run locally on 3.24.
+
 ### Phase 4 — Adapters
 
 Second EventChannel and `checkIntegrityNow` in `android/.../MobileHardeningKitPlugin.kt` and `ios/Classes/MobileHardeningKitPlugin.swift`; engine-detach teardown of both channels. Tests: Android adapter (≥95% / ≥60%), `example/flutter/ios/RunnerTests` (≥90%).
@@ -224,7 +233,8 @@ Re-run Phase 0 on the release candidate (Android with Frida attach mid-session a
 | Phase 1 Dart contract | Sonnet | after Phase 0 |
 | Phase 2 Android core | Sonnet | parallel with 3 |
 | Phase 3 iOS core (dyld callback, locking) | Opus | parallel; concurrency-sensitive |
-| Phase 4 adapters + Phase 5 samples | Sonnet | after 1–3 |
+| Phase T toolchain upgrade | Opus | parallel with Phase 3; before Phase 4 |
+| Phase 4 adapters + Phase 5 samples | Sonnet | after 1–3 and T |
 | Docs drafts | Haiku draft, orchestrator review | after 4 |
 | Final cross-platform security review | Opus | before PR |
 
