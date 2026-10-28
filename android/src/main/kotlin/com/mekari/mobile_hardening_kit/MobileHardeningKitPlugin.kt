@@ -13,13 +13,38 @@ class MobileHardeningKitPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
   private lateinit var kit: MobileHardeningKit
   private lateinit var methods: MethodChannel
   private lateinit var events: EventChannel
+  private lateinit var integrityEvents: EventChannel
+
+  /** Integrity-monitor stream; separate from the screen-events handler (the plugin itself). */
+  internal val integrityHandler = object : EventChannel.StreamHandler {
+    override fun onListen(arguments: Any?, eventSink: EventChannel.EventSink) {
+      val args = arguments as? Map<*, *>
+      val interval = (args?.get("intervalMs") as? Number)?.toLong() ?: DEFAULT_INTERVAL_MS
+      kit.startMonitoring(
+        IntegrityMonitorConfig(
+          intervalMs = interval,
+          checkOnResume = args?.get("checkOnResume") as? Boolean ?: true
+        ),
+        { eventSink.success(it.toMap()) },
+        HardeningConfig(
+          args?.get("expectedSigningCertificateSha256") as? String,
+          (args?.get("trustedAccessibilityPackages") as? List<*>)
+            ?.mapNotNull { it as? String }?.toSet().orEmpty()
+        )
+      )
+    }
+
+    override fun onCancel(arguments: Any?) = kit.stopMonitoring()
+  }
 
   override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
     kit = MobileHardeningKit(binding.applicationContext)
     methods = MethodChannel(binding.binaryMessenger, "mobile_hardening_kit")
     events = EventChannel(binding.binaryMessenger, "mobile_hardening_kit/events")
+    integrityEvents = EventChannel(binding.binaryMessenger, "mobile_hardening_kit/integrity_events")
     methods.setMethodCallHandler(this)
     events.setStreamHandler(this)
+    integrityEvents.setStreamHandler(integrityHandler)
   }
 
   override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -42,6 +67,10 @@ class MobileHardeningKitPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
           )
         ).toMap()
       )
+      "checkIntegrityNow" -> {
+        kit.checkIntegrityNow()
+        result.success(null)
+      }
       else -> result.notImplemented()
     }
   }
@@ -61,7 +90,13 @@ class MobileHardeningKitPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
   override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
     kit.detachActivity()
     kit.stopObserving()
+    kit.stopMonitoring()
     methods.setMethodCallHandler(null)
     events.setStreamHandler(null)
+    integrityEvents.setStreamHandler(null)
+  }
+
+  private companion object {
+    const val DEFAULT_INTERVAL_MS = 30_000L
   }
 }

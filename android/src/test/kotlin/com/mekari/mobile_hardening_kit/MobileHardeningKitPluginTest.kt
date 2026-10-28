@@ -222,5 +222,114 @@ class MobileHardeningKitPluginTest {
     plugin.onDetachedFromEngine(binding)
     verify(messenger).setMessageHandler("mobile_hardening_kit", null)
     verify(messenger).setMessageHandler("mobile_hardening_kit/events", null)
+    verify(messenger).setMessageHandler("mobile_hardening_kit/integrity_events", null)
+  }
+
+  /** Monitor passes run on a background executor and post to the main looper; wait for them. */
+  private fun awaitEvents(sink: RecordingSink, count: Int) {
+    val deadline = System.nanoTime() + 10_000_000_000L
+    while (sink.events.size < count && System.nanoTime() < deadline) {
+      shadowOf(Looper.getMainLooper()).idle()
+      Thread.sleep(10)
+    }
+    assertTrue("expected $count events, got ${sink.events.size}", sink.events.size >= count)
+  }
+
+  private fun types(sink: RecordingSink) = sink.events.map { (it as Map<*, *>)["type"] }
+
+  @Test
+  fun integrityStreamDeliversTheStartPassWithChangeAndTrigger() {
+    ReflectionHelpers.setStaticField(Build::class.java, "TAGS", "test-keys")
+    val sink = RecordingSink()
+    plugin.integrityHandler.onListen(
+      mapOf("intervalMs" to 60_000, "checkOnResume" to false), sink
+    )
+    awaitEvents(sink, 1)
+    val event = sink.events.single() as Map<*, *>
+    assertEquals("root", event["type"])
+    val metadata = event["metadata"] as Map<*, *>
+    assertEquals("detected", metadata["change"])
+    assertEquals("start", metadata["trigger"])
+    plugin.integrityHandler.onCancel(null)
+  }
+
+  @Test
+  fun integrityStreamAppliesCertificateAndTrustedPackagesFromTheListenArguments() {
+    Settings.Secure.putString(
+      context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+      "com.trusted/.S:com.other/.S"
+    )
+    val sink = RecordingSink()
+    plugin.integrityHandler.onListen(
+      mapOf(
+        "expectedSigningCertificateSha256" to "ab".repeat(32),
+        "trustedAccessibilityPackages" to listOf("com.trusted", 5, null)
+      ),
+      sink
+    )
+    awaitEvents(sink, 2)
+    assertEquals(listOf("accessibilityUnrecognized", "signatureMismatch"), types(sink).sortedBy { it.toString() })
+    plugin.integrityHandler.onCancel(null)
+  }
+
+  @Test
+  fun integrityStreamFallsBackToDefaultsForMissingOrInvalidArguments() {
+    ReflectionHelpers.setStaticField(Build::class.java, "TAGS", "test-keys")
+    for (arguments in listOf(
+      null, "bad", mapOf("intervalMs" to "soon", "checkOnResume" to "yes",
+        "expectedSigningCertificateSha256" to 7, "trustedAccessibilityPackages" to "x")
+    )) {
+      val sink = RecordingSink()
+      plugin.integrityHandler.onListen(arguments, sink)
+      awaitEvents(sink, 1)
+      assertEquals(listOf("root"), types(sink))
+      plugin.integrityHandler.onCancel(null)
+    }
+  }
+
+  @Test
+  fun checkIntegrityNowReturnsNullAndRunsAManualPassOnlyWhileMonitoring() {
+    ReflectionHelpers.setStaticField(Build::class.java, "TAGS", "test-keys")
+    val idle = call("checkIntegrityNow")
+    assertTrue(idle.succeeded)
+    assertEquals(null, idle.success)
+
+    val sink = RecordingSink()
+    plugin.integrityHandler.onListen(null, sink)
+    awaitEvents(sink, 1)
+    ReflectionHelpers.setStaticField(Build::class.java, "TAGS", "release-keys")
+    val manual = call("checkIntegrityNow")
+    assertTrue(manual.succeeded)
+    awaitEvents(sink, 2)
+    val cleared = (sink.events[1] as Map<*, *>)["metadata"] as Map<*, *>
+    assertEquals("cleared", cleared["change"])
+    assertEquals("manual", cleared["trigger"])
+    plugin.integrityHandler.onCancel(null)
+  }
+
+  @Test
+  fun cancelStopsIntegrityDelivery() {
+    ReflectionHelpers.setStaticField(Build::class.java, "TAGS", "test-keys")
+    val sink = RecordingSink()
+    plugin.integrityHandler.onListen(null, sink)
+    awaitEvents(sink, 1)
+    plugin.integrityHandler.onCancel(null)
+    ReflectionHelpers.setStaticField(Build::class.java, "TAGS", "release-keys")
+    call("checkIntegrityNow")
+    Thread.sleep(200)
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(1, sink.events.size)
+  }
+
+  @Test
+  fun engineDetachStopsMonitoring() {
+    ReflectionHelpers.setStaticField(Build::class.java, "TAGS", "test-keys")
+    val sink = RecordingSink()
+    plugin.integrityHandler.onListen(null, sink)
+    awaitEvents(sink, 1)
+    plugin.onDetachedFromEngine(mock(FlutterPlugin.FlutterPluginBinding::class.java))
+    Thread.sleep(200)
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(1, sink.events.size)
   }
 }
