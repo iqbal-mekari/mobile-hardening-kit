@@ -258,11 +258,15 @@ void main() {
 
     await tester.pumpWidget(const HardeningExampleApp());
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(SwitchListTile));
+    await tester.tap(find.byKey(const ValueKey<String>('protection-toggle')));
     await tester.pumpAndSettle();
 
     expect(
-      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      tester
+          .widget<SwitchListTile>(
+            find.byKey(const ValueKey<String>('protection-toggle')),
+          )
+          .value,
       isTrue,
     );
     expect(
@@ -305,11 +309,15 @@ void main() {
 
     await tester.pumpWidget(const HardeningExampleApp());
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(SwitchListTile));
+    await tester.tap(find.byKey(const ValueKey<String>('protection-toggle')));
     await tester.pumpAndSettle();
 
     expect(
-      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      tester
+          .widget<SwitchListTile>(
+            find.byKey(const ValueKey<String>('protection-toggle')),
+          )
+          .value,
       isFalse,
     );
     expect(find.text('Signal collection failed'), findsOneWidget);
@@ -446,4 +454,330 @@ void main() {
       expect(client.submittedKitSnapshots[1].$2, isEmpty);
     },
   );
+
+  group('integrity monitor section', () {
+    const integrityChannel = EventChannel(
+      'mobile_hardening_kit/integrity_events',
+    );
+    const toggleKey = ValueKey<String>('integrity-monitor-toggle');
+    const checkNowKey = ValueKey<String>('integrity-check-now');
+
+    late List<MethodCall> calls;
+    late List<Object?> listenArguments;
+    late int cancels;
+    MockStreamHandlerEventSink? sink;
+
+    Map<String, Object?> event(
+      String type,
+      String change,
+      String trigger, {
+      List<String> techniques = const <String>[],
+      List<String> artifacts = const <String>[],
+      String observedAt = '2026-01-02T03:04:05.123Z',
+    }) => <String, Object?>{
+      'type': type,
+      'observedAt': observedAt,
+      'metadata': <String, Object?>{
+        'change': change,
+        'trigger': trigger,
+        'techniques': techniques,
+        'artifacts': artifacts,
+      },
+    };
+
+    setUp(() {
+      calls = <MethodCall>[];
+      listenArguments = <Object?>[];
+      cancels = 0;
+      sink = null;
+      messenger.setMockMethodCallHandler(methodChannel, (call) async {
+        calls.add(call);
+        return call.method == 'snapshot' ? <Object?>[] : null;
+      });
+      messenger.setMockStreamHandler(
+        eventChannel,
+        MockStreamHandler.inline(onListen: (arguments, events) {}),
+      );
+      messenger.setMockStreamHandler(
+        integrityChannel,
+        MockStreamHandler.inline(
+          onListen: (arguments, events) {
+            listenArguments.add(arguments);
+            sink = events;
+            events.success(
+              event(
+                'instrumentation',
+                'detected',
+                'start',
+                techniques: <String>['maps', 'threadName'],
+                artifacts: <String>['/data/frida-agent.so'],
+              ),
+            );
+          },
+          onCancel: (arguments) => cancels++,
+        ),
+      );
+    });
+
+    tearDown(() {
+      messenger.setMockStreamHandler(integrityChannel, null);
+    });
+
+    // Event-channel messages take several async hops, with no frame in between.
+    Future<void> settle(WidgetTester tester) async {
+      await tester.pumpAndSettle();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> pumpApp(WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 4000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(const HardeningExampleApp());
+      await settle(tester);
+    }
+
+    String text(WidgetTester tester, String key) =>
+        tester.widget<Text>(find.byKey(ValueKey<String>(key))).data!;
+
+    testWidgets('starts stopped with a disabled check-now button', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+
+      expect(tester.widget<SwitchListTile>(find.byKey(toggleKey)).value, false);
+      expect(
+        tester.widget<ButtonStyleButton>(find.byKey(checkNowKey)).onPressed,
+        isNull,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('integrity-events-empty')),
+        findsOneWidget,
+      );
+      expect(text(tester, 'integrity-events-count'), 'Integrity events: 0');
+      expect(listenArguments, isEmpty);
+    });
+
+    testWidgets('toggle subscribes and lists the event fields', (tester) async {
+      await pumpApp(tester);
+
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+
+      expect(listenArguments, hasLength(1));
+      final arguments = listenArguments.single! as Map<Object?, Object?>;
+      expect(arguments['intervalMs'], 30000);
+      expect(arguments['checkOnResume'], true);
+      expect(tester.widget<SwitchListTile>(find.byKey(toggleKey)).value, true);
+      expect(text(tester, 'integrity-events-count'), 'Integrity events: 1');
+      expect(
+        find.byKey(const ValueKey<String>('integrity-events-empty')),
+        findsNothing,
+      );
+      expect(
+        text(tester, 'integrity-event-0-title'),
+        'instrumentation · detected',
+      );
+      expect(text(tester, 'integrity-event-0-type'), 'type: instrumentation');
+      expect(text(tester, 'integrity-event-0-change'), 'change: detected');
+      expect(text(tester, 'integrity-event-0-trigger'), 'trigger: start');
+      expect(
+        text(tester, 'integrity-event-0-techniques'),
+        'techniques: maps, threadName',
+      );
+      expect(
+        text(tester, 'integrity-event-0-artifacts'),
+        'artifacts: /data/frida-agent.so',
+      );
+      expect(
+        text(tester, 'integrity-event-0-observedAt'),
+        'observedAt: 2026-01-02T03:04:05.123Z',
+      );
+    });
+
+    testWidgets('lists newest first and shows dashes for empty lists', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+
+      sink!.success(event('root', 'cleared', 'manual'));
+      await settle(tester);
+
+      expect(text(tester, 'integrity-event-1-title'), 'root · cleared');
+      expect(text(tester, 'integrity-event-1-techniques'), 'techniques: -');
+      expect(text(tester, 'integrity-event-1-artifacts'), 'artifacts: -');
+      final newest = tester.getTopLeft(
+        find.byKey(const ValueKey<String>('integrity-event-1')),
+      );
+      final oldest = tester.getTopLeft(
+        find.byKey(const ValueKey<String>('integrity-event-0')),
+      );
+      expect(newest.dy, lessThan(oldest.dy));
+    });
+
+    testWidgets('missing metadata renders dashes', (tester) async {
+      await pumpApp(tester);
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+
+      sink!.success(<String, Object?>{
+        'type': 'emulator',
+        'observedAt': '2026-01-02T03:04:05Z',
+      });
+      await settle(tester);
+
+      expect(text(tester, 'integrity-event-1-title'), 'emulator · -');
+      expect(text(tester, 'integrity-event-1-trigger'), 'trigger: -');
+    });
+
+    testWidgets('the selected interval is sent and locked while running', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      await tester.tap(
+        find.byKey(const ValueKey<String>('integrity-interval-selector')),
+      );
+      await settle(tester);
+      await tester.tap(find.text('5 s').last);
+      await settle(tester);
+
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+
+      expect(
+        (listenArguments.single! as Map<Object?, Object?>)['intervalMs'],
+        5000,
+      );
+      expect(find.text('Running every 5 s'), findsOneWidget);
+      final selector = tester.widget<DropdownButtonFormField<int>>(
+        find.byKey(const ValueKey<String>('integrity-interval-selector')),
+      );
+      expect(selector.onChanged, isNull);
+    });
+
+    testWidgets('check now calls the method only while monitoring', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+
+      await tester.tap(find.byKey(checkNowKey));
+      await settle(tester);
+
+      expect(calls.where((c) => c.method == 'checkIntegrityNow'), hasLength(1));
+      expect(
+        find.byKey(const ValueKey<String>('integrity-error')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('check now failures are shown', (tester) async {
+      messenger.setMockMethodCallHandler(methodChannel, (call) async {
+        if (call.method == 'checkIntegrityNow') {
+          throw PlatformException(code: 'check_failed', message: 'no monitor');
+        }
+        return <Object?>[];
+      });
+      await pumpApp(tester);
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+
+      await tester.tap(find.byKey(checkNowKey));
+      await settle(tester);
+
+      expect(
+        find.byKey(const ValueKey<String>('integrity-error')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('check_failed'), findsOneWidget);
+    });
+
+    testWidgets('stream errors are shown and cleared on restart', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+
+      sink!.error(code: 'monitor_failed', message: 'native monitor stopped');
+      await settle(tester);
+      expect(find.textContaining('monitor_failed'), findsOneWidget);
+
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+      expect(
+        find.byKey(const ValueKey<String>('integrity-error')),
+        findsNothing,
+      );
+    });
+
+    testWidgets(
+      'toggling off cancels the subscription and disables check now',
+      (tester) async {
+        await pumpApp(tester);
+        await tester.tap(find.byKey(toggleKey));
+        await settle(tester);
+
+        await tester.tap(find.byKey(toggleKey));
+        await settle(tester);
+
+        expect(cancels, 1);
+        expect(
+          tester.widget<SwitchListTile>(find.byKey(toggleKey)).value,
+          false,
+        );
+        expect(
+          tester.widget<ButtonStyleButton>(find.byKey(checkNowKey)).onPressed,
+          isNull,
+        );
+        expect(text(tester, 'integrity-events-count'), 'Integrity events: 1');
+      },
+    );
+
+    testWidgets('clear empties the list', (tester) async {
+      await pumpApp(tester);
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('integrity-events-clear')),
+      );
+      await settle(tester);
+
+      expect(text(tester, 'integrity-events-count'), 'Integrity events: 0');
+      expect(
+        find.byKey(const ValueKey<String>('integrity-events-empty')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('keeps only the latest 50 events', (tester) async {
+      await pumpApp(tester);
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+
+      for (var i = 0; i < 55; i++) {
+        sink!.success(event('root', 'changed', 'interval'));
+      }
+      await settle(tester);
+
+      expect(text(tester, 'integrity-events-count'), 'Integrity events: 50');
+    });
+
+    testWidgets('disposing the page cancels a running monitor', (tester) async {
+      await pumpApp(tester);
+      await tester.tap(find.byKey(toggleKey));
+      await settle(tester);
+
+      await tester.pumpWidget(const SizedBox());
+      await settle(tester);
+
+      expect(cancels, 1);
+    });
+  });
 }

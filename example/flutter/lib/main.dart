@@ -40,6 +40,18 @@ const _riskTypes = <HardeningSignalType>{
   HardeningSignalType.devModeEnabled,
 };
 
+const _integrityIntervals = <int, String>{5: '5 s', 30: '30 s'};
+const _integrityEventLimit = 50;
+
+class _IntegrityEntry {
+  const _IntegrityEntry(this.id, this.signal);
+  final int id;
+  final HardeningSignal signal;
+}
+
+String _joined(Object? values) =>
+    values is Iterable && values.isNotEmpty ? values.join(', ') : '-';
+
 class HardeningExampleApp extends StatelessWidget {
   const HardeningExampleApp({super.key});
   @override
@@ -65,6 +77,11 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
   final List<HardeningSignal> _snapshotSignals = <HardeningSignal>[];
   final List<HardeningSignal> _streamSignals = <HardeningSignal>[];
   StreamSubscription<HardeningSignal>? _subscription;
+  StreamSubscription<HardeningSignal>? _integritySubscription;
+  final List<_IntegrityEntry> _integrityEvents = <_IntegrityEntry>[];
+  int _integritySequence = 0;
+  int _integrityIntervalSeconds = 30;
+  String? _integrityError;
   bool _loading = true;
   bool _checking = false;
   bool _protectionEnabled = false;
@@ -147,6 +164,44 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
     }
   }
 
+  void _toggleIntegrityMonitor(bool enabled) {
+    _integritySubscription?.cancel();
+    _integritySubscription = null;
+    setState(() => _integrityError = null);
+    if (!enabled) return;
+    _integritySubscription = _kit
+        .integrityEvents(
+          IntegrityMonitorConfig(
+            interval: Duration(seconds: _integrityIntervalSeconds),
+          ),
+        )
+        .listen(
+          (signal) {
+            if (!mounted) return;
+            setState(() {
+              _integrityEvents.insert(
+                0,
+                _IntegrityEntry(_integritySequence++, signal),
+              );
+              if (_integrityEvents.length > _integrityEventLimit) {
+                _integrityEvents.removeLast();
+              }
+            });
+          },
+          onError: (Object error) {
+            if (mounted) setState(() => _integrityError = '$error');
+          },
+        );
+  }
+
+  Future<void> _checkIntegrityNow() async {
+    try {
+      await _kit.checkIntegrityNow();
+    } catch (error) {
+      if (mounted) setState(() => _integrityError = '$error');
+    }
+  }
+
   Future<void> _toggleProtection(bool enabled) async {
     try {
       final state = await _kit.setScreenProtection(
@@ -222,6 +277,7 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
   @override
   void dispose() {
     _subscription?.cancel();
+    _integritySubscription?.cancel();
     if (_protectionEnabled) {
       unawaited(_kit.setScreenProtection(ScreenProtection.off));
     }
@@ -239,6 +295,7 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
         ),
         const SizedBox(height: 12),
         SwitchListTile(
+          key: const ValueKey<String>('protection-toggle'),
           contentPadding: EdgeInsets.zero,
           title: const Text('Protect sensitive display content'),
           subtitle: const Text('Capture, recording, and app switcher.'),
@@ -284,6 +341,8 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
             ),
           ),
         ),
+        const Divider(height: 32),
+        ..._integritySection(context),
         const Divider(height: 32),
         Text(
           'Play Integrity sample',
@@ -370,6 +429,132 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
       ],
     ),
   );
+
+  List<Widget> _integritySection(BuildContext context) => <Widget>[
+    Text('Integrity monitor', style: Theme.of(context).textTheme.titleLarge),
+    const Text(
+      'Reports only new, changed, or cleared findings. Screen and display events stay on the event stream above.',
+    ),
+    SwitchListTile(
+      key: const ValueKey<String>('integrity-monitor-toggle'),
+      contentPadding: EdgeInsets.zero,
+      title: const Text('Run integrity monitor'),
+      subtitle: Text(
+        _integritySubscription == null
+            ? 'Stopped'
+            : 'Running every $_integrityIntervalSeconds s',
+      ),
+      value: _integritySubscription != null,
+      onChanged: _toggleIntegrityMonitor,
+    ),
+    DropdownButtonFormField<int>(
+      key: const ValueKey<String>('integrity-interval-selector'),
+      initialValue: _integrityIntervalSeconds,
+      isExpanded: true,
+      decoration: const InputDecoration(labelText: 'Check interval'),
+      items: _integrityIntervals.entries
+          .map(
+            (entry) => DropdownMenuItem<int>(
+              value: entry.key,
+              child: Text(entry.value),
+            ),
+          )
+          .toList(),
+      onChanged: _integritySubscription != null
+          ? null
+          : (value) {
+              if (value != null) {
+                setState(() => _integrityIntervalSeconds = value);
+              }
+            },
+    ),
+    const SizedBox(height: 8),
+    Row(
+      children: <Widget>[
+        FilledButton.icon(
+          key: const ValueKey<String>('integrity-check-now'),
+          onPressed: _integritySubscription == null ? null : _checkIntegrityNow,
+          icon: const Icon(Icons.fact_check_outlined),
+          label: const Text('Check now'),
+        ),
+        const SizedBox(width: 8),
+        TextButton(
+          key: const ValueKey<String>('integrity-events-clear'),
+          onPressed: _integrityEvents.isEmpty
+              ? null
+              : () => setState(_integrityEvents.clear),
+          child: const Text('Clear'),
+        ),
+      ],
+    ),
+    if (_integrityError != null)
+      ListTile(
+        key: const ValueKey<String>('integrity-error'),
+        leading: const Icon(Icons.error_outline),
+        title: const Text('Integrity monitor error'),
+        subtitle: Text(_integrityError!),
+      ),
+    Text(
+      'Integrity events: ${_integrityEvents.length}',
+      key: const ValueKey<String>('integrity-events-count'),
+    ),
+    if (_integrityEvents.isEmpty)
+      const Text(
+        'No integrity events yet. Findings appear here when they are detected, change, or clear.',
+        key: ValueKey<String>('integrity-events-empty'),
+      ),
+    Column(
+      key: const ValueKey<String>('integrity-events-list'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: _integrityEvents.map(_integrityTile).toList(),
+    ),
+  ];
+
+  Widget _integrityTile(_IntegrityEntry entry) {
+    final signal = entry.signal;
+    final metadata = signal.metadata;
+    final prefix = 'integrity-event-${entry.id}';
+    return Card(
+      key: ValueKey<String>(prefix),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '${signal.type.name} · ${metadata['change'] ?? '-'}',
+              key: ValueKey<String>('$prefix-title'),
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            Text(
+              'type: ${signal.type.name}',
+              key: ValueKey<String>('$prefix-type'),
+            ),
+            Text(
+              'change: ${metadata['change'] ?? '-'}',
+              key: ValueKey<String>('$prefix-change'),
+            ),
+            Text(
+              'trigger: ${metadata['trigger'] ?? '-'}',
+              key: ValueKey<String>('$prefix-trigger'),
+            ),
+            Text(
+              'techniques: ${_joined(metadata['techniques'])}',
+              key: ValueKey<String>('$prefix-techniques'),
+            ),
+            Text(
+              'artifacts: ${_joined(metadata['artifacts'])}',
+              key: ValueKey<String>('$prefix-artifacts'),
+            ),
+            Text(
+              'observedAt: ${signal.observedAt.toUtc().toIso8601String()}',
+              key: ValueKey<String>('$prefix-observedAt'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _resultView(Map<String, Object?> result) {
     final verdicts = result['verdicts'] as Map;
