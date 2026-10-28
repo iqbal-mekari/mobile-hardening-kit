@@ -33,10 +33,15 @@ class MobileHardeningKitPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
           )
         ).map(HardeningSignal::toMap)
       )
-      "setScreenProtectionEnabled" -> {
-        kit.setScreenProtectionEnabled(call.argument<Boolean>("enabled") ?: false)
-        result.success(null)
-      }
+      "setScreenProtection" -> result.success(
+        kit.setScreenProtection(
+          ScreenProtection(
+            blockCapture = call.argument<Boolean>("blockCapture") ?: false,
+            obscureWhileCaptured = call.argument<Boolean>("obscureWhileCaptured") ?: false,
+            obscureAppSwitcher = call.argument<Boolean>("obscureAppSwitcher") ?: false
+          )
+        ).toMap()
+      )
       else -> result.notImplemented()
     }
   }

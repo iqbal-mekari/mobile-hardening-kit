@@ -234,12 +234,19 @@ void main() {
 
   testWidgets('enabling protection is reflected and cleared on disposal',
       (tester) async {
-    final protectionRequests = <bool>[];
+    final protectionRequests = <Map<Object?, Object?>>[];
     messenger.setMockMethodCallHandler(methodChannel, (call) async {
-      if (call.method == 'setScreenProtectionEnabled') {
+      if (call.method == 'setScreenProtection') {
         final arguments = call.arguments as Map<Object?, Object?>;
-        protectionRequests.add(arguments['enabled'] as bool);
-        return null;
+        protectionRequests.add(arguments);
+        return <String, Object?>{
+          'captureBlocked': arguments['blockCapture'],
+          'obscuresWhileCaptured': false,
+          'obscuresAppSwitcher': arguments['obscureAppSwitcher'],
+          'unavailable': arguments['blockCapture'] == true
+              ? <Object?>['obscureWhileCaptured:apiLevel']
+              : <Object?>[],
+        };
       }
       return <Object?>[];
     });
@@ -255,16 +262,29 @@ void main() {
 
     expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
         isTrue);
+    expect(
+        find.textContaining('obscureWhileCaptured:apiLevel'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
 
-    expect(protectionRequests, <bool>[true, false]);
+    expect(protectionRequests, <Map<Object?, Object?>>[
+      <String, Object?>{
+        'blockCapture': true,
+        'obscureWhileCaptured': true,
+        'obscureAppSwitcher': true,
+      },
+      <String, Object?>{
+        'blockCapture': false,
+        'obscureWhileCaptured': false,
+        'obscureAppSwitcher': false,
+      },
+    ]);
   });
 
   testWidgets('keeps protection disabled and reports platform errors',
       (tester) async {
     messenger.setMockMethodCallHandler(methodChannel, (call) async {
-      if (call.method == 'setScreenProtectionEnabled') {
+      if (call.method == 'setScreenProtection') {
         throw PlatformException(
           code: 'protection_unavailable',
           message: 'window unavailable',

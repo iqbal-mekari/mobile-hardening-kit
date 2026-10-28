@@ -132,17 +132,48 @@ class MobileHardeningKitPluginTest {
   }
 
   @Test
-  fun screenProtectionFollowsTheEnabledArgument() {
+  fun screenProtectionMapsArgumentsAndReturnsTheState() {
     val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
     attach(activity)
 
-    assertTrue(call("setScreenProtectionEnabled", mapOf("enabled" to true)).succeeded)
+    val result = call(
+      "setScreenProtection",
+      mapOf("blockCapture" to true, "obscureWhileCaptured" to true, "obscureAppSwitcher" to true)
+    )
+    assertEquals(
+      mapOf(
+        "captureBlocked" to true, "obscuresWhileCaptured" to true,
+        "obscuresAppSwitcher" to true, "unavailable" to emptyList<String>()
+      ),
+      result.success
+    )
     assertTrue(isSecure(activity))
-    assertTrue(call("setScreenProtectionEnabled", mapOf("enabled" to false)).succeeded)
+
+    val partial = call("setScreenProtection", mapOf("obscureAppSwitcher" to true))
+    assertEquals(
+      mapOf(
+        "captureBlocked" to false, "obscuresWhileCaptured" to false,
+        "obscuresAppSwitcher" to true, "unavailable" to emptyList<String>()
+      ),
+      partial.success
+    )
     assertFalse(isSecure(activity))
-    call("setScreenProtectionEnabled", mapOf("enabled" to true))
-    call("setScreenProtectionEnabled", null)
-    assertFalse("missing argument disables protection", isSecure(activity))
+
+    call("setScreenProtection", mapOf("blockCapture" to true))
+    val missing = call("setScreenProtection", null)
+    assertEquals(false, (missing.success as Map<*, *>)["captureBlocked"])
+    assertFalse("missing arguments disable protection", isSecure(activity))
+  }
+
+  @Test
+  fun screenProtectionWithoutActivityReportsNoActivity() {
+    val result = call("setScreenProtection", mapOf("blockCapture" to true))
+    assertEquals(listOf("blockCapture:noActivity"), (result.success as Map<*, *>)["unavailable"])
+  }
+
+  @Test
+  fun theOldMethodNameIsNotImplemented() {
+    assertTrue(call("setScreenProtectionEnabled", mapOf("enabled" to true)).notImplemented)
   }
 
   @Test
@@ -172,7 +203,7 @@ class MobileHardeningKitPluginTest {
     val binding = mock(ActivityPluginBinding::class.java)
     `when`(binding.activity).thenReturn(activity)
     plugin.onAttachedToActivity(binding)
-    call("setScreenProtectionEnabled", mapOf("enabled" to true))
+    call("setScreenProtection", mapOf("blockCapture" to true))
     assertTrue(isSecure(activity))
 
     plugin.onDetachedFromActivityForConfigChanges()

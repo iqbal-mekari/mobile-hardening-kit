@@ -229,29 +229,158 @@ void main() {
     });
   });
 
-  test('setScreenProtectionEnabled sends the flag and propagates errors',
-      () async {
-    final calls = <MethodCall>[];
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      calls.add(call);
-      if ((call.arguments as Map<Object?, Object?>)['enabled'] == false) {
-        throw PlatformException(code: 'unavailable');
-      }
-      return null;
-    });
-    final kit = MobileHardeningKit();
+  Map<String, Object?> stateReply() => <String, Object?>{
+        'captureBlocked': true,
+        'obscuresWhileCaptured': false,
+        'obscuresAppSwitcher': true,
+        'unavailable': <Object?>['obscureWhileCaptured:apiLevel'],
+        'extra': 'ignored',
+      };
 
-    await kit.setScreenProtectionEnabled(true);
-    await expectLater(
-      kit.setScreenProtectionEnabled(false),
-      throwsA(isA<PlatformException>()),
+  test('setScreenProtection sends options and decodes the applied state',
+      () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return stateReply();
+    });
+
+    final state = await MobileHardeningKit().setScreenProtection(
+      const ScreenProtection(blockCapture: true, obscureAppSwitcher: true),
     );
 
-    expect(calls.map((call) => call.method),
-        <String>['setScreenProtectionEnabled', 'setScreenProtectionEnabled']);
-    expect(calls.map((call) => call.arguments), <Object?>[
-      <String, Object?>{'enabled': true},
-      <String, Object?>{'enabled': false},
-    ]);
+    expect(received?.method, 'setScreenProtection');
+    expect(received?.arguments, <String, Object?>{
+      'blockCapture': true,
+      'obscureWhileCaptured': false,
+      'obscureAppSwitcher': true,
+    });
+    expect(state.captureBlocked, isTrue);
+    expect(state.obscuresWhileCaptured, isFalse);
+    expect(state.obscuresAppSwitcher, isTrue);
+    expect(state.unavailable, <String>['obscureWhileCaptured:apiLevel']);
+    expect(() => state.unavailable.add('x'), throwsUnsupportedError);
+  });
+
+  test('setScreenProtection(off) sends all-false options', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return <String, Object?>{
+        'captureBlocked': false,
+        'obscuresWhileCaptured': false,
+        'obscuresAppSwitcher': false,
+        'unavailable': <Object?>[],
+      };
+    });
+
+    final state =
+        await MobileHardeningKit().setScreenProtection(ScreenProtection.off);
+
+    expect(received?.arguments, <String, Object?>{
+      'blockCapture': false,
+      'obscureWhileCaptured': false,
+      'obscureAppSwitcher': false,
+    });
+    expect(state.unavailable, isEmpty);
+    expect(state.captureBlocked, isFalse);
+  });
+
+  test('setScreenProtection rejects a null native result', () {
+    messenger.setMockMethodCallHandler(channel, (call) async => null);
+
+    expect(MobileHardeningKit().setScreenProtection(ScreenProtection.off),
+        throwsFormatException);
+  });
+
+  test('setScreenProtection propagates platform errors', () {
+    messenger.setMockMethodCallHandler(
+        channel, (call) async => throw PlatformException(code: 'unavailable'));
+
+    expect(MobileHardeningKit().setScreenProtection(ScreenProtection.off),
+        throwsA(isA<PlatformException>()));
+  });
+
+  test('state decoder rejects missing and mistyped keys', () {
+    for (final key in stateReply().keys.where((key) => key != 'extra')) {
+      expect(
+        () => ScreenProtectionState.fromMap(stateReply()..remove(key)),
+        throwsFormatException,
+        reason: 'missing $key',
+      );
+    }
+    for (final key in <String>[
+      'captureBlocked',
+      'obscuresWhileCaptured',
+      'obscuresAppSwitcher',
+    ]) {
+      expect(
+        () => ScreenProtectionState.fromMap(stateReply()..[key] = 'yes'),
+        throwsFormatException,
+        reason: 'mistyped $key',
+      );
+    }
+    expect(
+      () => ScreenProtectionState.fromMap(stateReply()..['unavailable'] = 'x'),
+      throwsFormatException,
+    );
+    expect(
+      () => ScreenProtectionState.fromMap(
+          stateReply()..['unavailable'] = <Object?>[1]),
+      throwsFormatException,
+    );
+  });
+
+  test('ScreenProtection defaults, off, toMap, equality, and hash code', () {
+    const all = ScreenProtection(
+      blockCapture: true,
+      obscureWhileCaptured: true,
+      obscureAppSwitcher: true,
+    );
+
+    expect(ScreenProtection.off, const ScreenProtection());
+    expect(ScreenProtection.off.toMap().values, everyElement(isFalse));
+    expect(all.toMap().values, everyElement(isTrue));
+    expect(
+        all,
+        const ScreenProtection(
+          blockCapture: true,
+          obscureWhileCaptured: true,
+          obscureAppSwitcher: true,
+        ));
+    expect(all.hashCode, all.hashCode);
+    expect(all.hashCode, isNot(ScreenProtection.off.hashCode));
+    expect(all == Object(), isFalse);
+    expect(ScreenProtection.off,
+        isNot(const ScreenProtection(blockCapture: true)));
+    expect(ScreenProtection.off,
+        isNot(const ScreenProtection(obscureWhileCaptured: true)));
+    expect(ScreenProtection.off,
+        isNot(const ScreenProtection(obscureAppSwitcher: true)));
+  });
+
+  test('ScreenProtectionState equality and hash code', () {
+    ScreenProtectionState make({
+      bool blocked = true,
+      bool whileCaptured = false,
+      bool switcher = true,
+      List<String> unavailable = const <String>['a:b'],
+    }) =>
+        ScreenProtectionState(
+          captureBlocked: blocked,
+          obscuresWhileCaptured: whileCaptured,
+          obscuresAppSwitcher: switcher,
+          unavailable: unavailable,
+        );
+
+    expect(make(), make());
+    expect(make().hashCode, make().hashCode);
+    expect(make() == Object(), isFalse);
+    expect(make(), isNot(make(blocked: false)));
+    expect(make(), isNot(make(whileCaptured: true)));
+    expect(make(), isNot(make(switcher: false)));
+    expect(make(), isNot(make(unavailable: const <String>[])));
+    expect(make(), isNot(make(unavailable: const <String>['a:c'])));
+    expect(make(unavailable: const <String>[]).unavailable, isEmpty);
   });
 }

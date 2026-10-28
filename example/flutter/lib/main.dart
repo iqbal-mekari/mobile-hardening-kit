@@ -26,6 +26,11 @@ const _policies = <String, String>{
   'kitPrecedence': 'Prefer kit when available',
   'providerPrecedence': 'Prefer Play when available',
 };
+const _fullProtection = ScreenProtection(
+  blockCapture: true,
+  obscureWhileCaptured: true,
+  obscureAppSwitcher: true,
+);
 const _riskTypes = <HardeningSignalType>{
   HardeningSignalType.root,
   HardeningSignalType.jailbreak,
@@ -63,6 +68,7 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
   bool _loading = true;
   bool _checking = false;
   bool _protectionEnabled = false;
+  List<String> _protectionUnavailable = const <String>[];
   bool _kitSnapshotAvailable = false;
   String _policy = 'or';
   Object? _error;
@@ -140,8 +146,14 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
 
   Future<void> _toggleProtection(bool enabled) async {
     try {
-      await _kit.setScreenProtectionEnabled(enabled);
-      if (mounted) setState(() => _protectionEnabled = enabled);
+      final state = await _kit.setScreenProtection(
+          enabled ? _fullProtection : ScreenProtection.off);
+      if (mounted) {
+        setState(() {
+          _protectionEnabled = enabled;
+          _protectionUnavailable = state.unavailable;
+        });
+      }
     } catch (error) {
       if (mounted) setState(() => _error = error);
     }
@@ -204,7 +216,9 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
   @override
   void dispose() {
     _subscription?.cancel();
-    if (_protectionEnabled) unawaited(_kit.setScreenProtectionEnabled(false));
+    if (_protectionEnabled) {
+      unawaited(_kit.setScreenProtection(ScreenProtection.off));
+    }
     super.dispose();
   }
 
@@ -218,10 +232,12 @@ class _SignalExplorerPageState extends State<SignalExplorerPage> {
           SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Protect sensitive display content'),
-              subtitle: const Text(
-                  'Android FLAG_SECURE; iOS app-switcher snapshot blur.'),
+              subtitle: const Text('Capture, recording, and app switcher.'),
               value: _protectionEnabled,
               onChanged: _checking ? null : _toggleProtection),
+          if (_protectionUnavailable.isNotEmpty)
+            Text('Unavailable: ${_protectionUnavailable.join(', ')}',
+                key: const ValueKey<String>('protection-unavailable')),
           FilledButton.icon(
               onPressed: _loading || _checking ? null : _refresh,
               icon: const Icon(Icons.refresh),

@@ -4,7 +4,7 @@ import PackageDescription
 // Native iOS integration. The Flutter plugin pod (ios/mobile_hardening_kit.podspec) compiles the same sources.
 let package = Package(
   name: "MobileHardeningKit",
-  platforms: [.iOS(.v13)],
+  platforms: [.iOS(.v15)],
   products: [
     .library(name: "MobileHardeningKit", targets: ["MobileHardeningKit"])
   ],
