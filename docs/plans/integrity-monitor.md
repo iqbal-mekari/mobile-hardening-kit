@@ -1,5 +1,3 @@
-**Classification: INTERNAL**
-
 # Runtime integrity monitor and split event streams (0.4.0)
 
 Branch: `feat/integrity-monitor` (stacked on `feat/screen-protection-redesign`; rebase onto `main` after PR #3 merges) · Target release: `0.4.0` · Status: approved 2026-10-28; Phase 0 complete, implementation not started
