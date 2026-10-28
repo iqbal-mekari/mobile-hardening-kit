@@ -11,10 +11,27 @@ final class InjectionNeedlesTests: XCTestCase {
 
   func testMatchesNeedlesCaseInsensitively() {
     XCTAssertTrue(matches("/usr/lib/FRIDA-agent.dylib"))
+    XCTAssertTrue(matches("/usr/lib/frida/frida-agent.dylib"))
+    XCTAssertTrue(matches("FridaGadget.dylib"))
     XCTAssertTrue(matches("/Frameworks/FridaGadget.dylib"))
+    XCTAssertTrue(matches("/usr/lib/libfrida-gadget.dylib"))
+    XCTAssertTrue(matches("/usr/lib/substitute-loader.dylib"))
+    XCTAssertTrue(matches("/usr/lib/libsubstitute.dylib"))
+    XCTAssertTrue(matches("/usr/lib/libhooker.dylib"))
     XCTAssertTrue(matches("/Library/MobileSubstrate/MobileSubstrate.dylib"))
     XCTAssertTrue(matches("/usr/lib/CydiaSubstrate.framework/CydiaSubstrate"))
     XCTAssertTrue(matches("/var/jb/usr/lib/libellekit.dylib"))
+  }
+
+  func testOnlyTheFileNameIsMatched() {
+    let app = "/var/containers/Bundle/Application/X/TGIFridays.app"
+    XCTAssertFalse(matches(app + "/TGIFridays"))
+    XCTAssertFalse(matches(app + "/Frameworks/Friday.framework/Friday"))
+    XCTAssertFalse(matches("/usr/lib/frida/libSystem.dylib"))
+    XCTAssertFalse(matches("/Library/MobileSubstrate/other.dylib"))
+    XCTAssertFalse(matches("/usr/lib/xposed.dylib"))
+    XCTAssertFalse(matches("/usr/lib/frida.dylib"))
+    XCTAssertFalse(matches("/usr/lib/"))
   }
 
   func testIgnoresGenericNames() {
@@ -23,11 +40,16 @@ final class InjectionNeedlesTests: XCTestCase {
     XCTAssertFalse(matches(""))
   }
 
-  func testArtifactsAreLowercasedAndBounded() {
-    let long = "/A/" + String(repeating: "b", count: 200) + "/Frida.dylib"
+  func testArtifactsAreLowercasedFileNamesAndBounded() {
+    let long = "/A/" + String(repeating: "b", count: 200) + "FridaGadget.dylib"
     let artifact = InjectionNeedles.artifact(long)
     XCTAssertEqual(artifact.count, 120)
-    XCTAssertTrue(artifact.hasSuffix("/frida.dylib"))
+    XCTAssertTrue(artifact.hasSuffix("fridagadget.dylib"))
+    XCTAssertEqual(
+      InjectionNeedles.artifact("/var/containers/Bundle/UUID-1234/X.app/FridaGadget.dylib"),
+      "fridagadget.dylib")
+    XCTAssertEqual(InjectionNeedles.artifact("ElleKit.dylib"), "ellekit.dylib")
+    XCTAssertEqual(InjectionNeedles.artifact(""), "")
   }
 }
 
@@ -46,6 +68,19 @@ final class DyldImageLoadObserverTests: XCTestCase {
     XCTAssertGreaterThan(state.replayedImages, 0)
     XCTAssertEqual(state.replayedImages, state.imagesAtRegistration)
     XCTAssertLessThanOrEqual(state.replayedImages, Int(_dyld_image_count()))
+  }
+
+  func testLoadsAreReplayOnlyWhenTheHeaderPredatesRegistration() throws {
+    let observation = SystemProbe().observeImageLoads { _ in }
+    defer { observation.cancel() }
+    XCTAssertTrue(observer.waitForRegistration(timeout: 10))
+
+    let first = try XCTUnwrap(_dyld_get_image_header(0))
+    XCTAssertFalse(observer.isLive(UnsafeRawPointer(first)))
+    var unknown = 0
+    withUnsafePointer(to: &unknown) { XCTAssertTrue(observer.isLive(UnsafeRawPointer($0))) }
+    // The real callback path (dladdr + match + label) runs for an already-loaded image.
+    observer.imageAdded(first)
   }
 
   func testLaterLoadsReachTheCallbackOnTheLoadingThread() throws {
@@ -96,8 +131,8 @@ final class DyldImageLoadObserverTests: XCTestCase {
     XCTAssertEqual(
       batches.flatMap { $0 },
       [
-        ImageLoad(path: "/private/var/tmp/fridagadget.dylib", live: true),
-        ImageLoad(path: "/var/jb/ellekit.dylib", live: false),
+        ImageLoad(path: "fridagadget.dylib", live: true),
+        ImageLoad(path: "ellekit.dylib", live: false),
       ])
     XCTAssertEqual(cancelledCalls, 0)
   }
@@ -111,7 +146,7 @@ final class DyldImageLoadObserverTests: XCTestCase {
   }
 
   func testHitsWithoutSubscribersAreDropped() {
-    "/tmp/frida.dylib".withCString { observer.imagePathAdded($0, live: true) }
+    "/tmp/fridagadget.dylib".withCString { observer.imagePathAdded($0, live: true) }
     observer.queue.sync {}  // enqueue ran and scheduled the flush
     observer.queue.sync {}  // flush ran with no subscribers
 
@@ -138,7 +173,7 @@ final class DyldImageLoadObserverTests: XCTestCase {
     XCTAssertEqual(load?.type, .instrumentation)
     XCTAssertEqual(load?.metadata["change"] as? String, "detected")
     XCTAssertEqual(
-      load?.metadata["artifacts"] as? [String], ["/private/var/tmp/fridagadget.dylib"])
+      load?.metadata["artifacts"] as? [String], ["fridagadget.dylib"])
     XCTAssertEqual(load?.metadata["techniques"] as? [String], ["dyldImageLoad"])
     kit.checkIntegrityNow()
   }

@@ -2,31 +2,59 @@ import Darwin
 import Foundation
 import MachO
 
-/// Image-path fragments of known injection frameworks, matched case-insensitively.
+/// File-name tokens of known injection frameworks, matched case-insensitively against the last
+/// path component only (never the directory path or the app bundle name).
 enum InjectionNeedles {
-  static let all: [StaticString] = [
-    "frida", "fridagadget", "mobilesubstrate", "cydiasubstrate", "substitute", "libhooker",
-    "ellekit", "xposed",
+  /// Specific tokens. Generic fragments such as `frida` or `substitute` would also match app
+  /// names like `TGIFridays.app`, so they are deliberately absent. `xposed` is Android-only.
+  ///
+  /// Each literal is a `StaticString`. Swift emits string literals NUL-terminated in read-only
+  /// data and `utf8Start` points at that storage, so each pointer is a valid C string for the
+  /// life of the process; `hasPointerRepresentation` is asserted below.
+  private static let literals: [StaticString] = [
+    "fridagadget", "frida-gadget", "frida-agent", "libfrida", "mobilesubstrate",
+    "cydiasubstrate", "libsubstitute", "substitute-loader", "ellekit", "libhooker",
   ]
 
-  /// True when `path` contains a needle. Allocation-free, so it is safe inside dyld callbacks.
+  /// Plain pointer table built eagerly, so the dyld callback never triggers lazy
+  /// initialisation, allocation, or Swift metadata work under the loader lock.
+  private static let table: (pointers: UnsafeMutablePointer<UnsafePointer<CChar>>, count: Int) = {
+    let pointers = UnsafeMutablePointer<UnsafePointer<CChar>>.allocate(capacity: literals.count)
+    for (index, needle) in literals.enumerated() {
+      precondition(needle.hasPointerRepresentation)
+      pointers[index] = UnsafeRawPointer(needle.utf8Start).assumingMemoryBound(to: CChar.self)
+    }
+    return (pointers, literals.count)  // intentionally never freed: process lifetime
+  }()
+
+  /// Forces the needle table to initialise. Call before registering the dyld callback.
+  static func prepare() {
+    _ = table.count
+  }
+
+  /// True when the file name of `path` (the part after the last `/`) contains a needle.
+  /// Allocation-free once `prepare()` ran, so it is safe inside dyld callbacks.
   static func matches(_ path: UnsafePointer<CChar>) -> Bool {
-    for needle in all {
-      let fragment = UnsafeRawPointer(needle.utf8Start).assumingMemoryBound(to: CChar.self)
-      if strcasestr(path, fragment) != nil { return true }
+    let slash = strrchr(path, Int32(UInt8(ascii: "/")))
+    let name = slash.map { UnsafePointer($0 + 1) } ?? path
+    let table = Self.table
+    for index in 0..<table.count where strcasestr(name, table.pointers[index]) != nil {
+      return true
     }
     return false
   }
 
-  /// The bounded artifact form of a matching path, shared by image scans and load events.
+  /// The bounded artifact form of a matching path: the lowercased file name only (at most 120
+  /// characters). Directories are dropped because they hold the app container UUID.
   static func artifact(_ path: String) -> String {
-    String(path.lowercased().suffix(120))
+    let name = path.split(separator: "/", omittingEmptySubsequences: false).last ?? ""
+    return String(name.lowercased().suffix(120))
   }
 }
 
 /// A matching image reported by the add-image callback.
 struct ImageLoad: Equatable {
-  /// Artifact form of the image path (`InjectionNeedles.artifact`).
+  /// Artifact form of the image path (file name only) (`InjectionNeedles.artifact`).
   let path: String
   /// False for images replayed while the callback registers; those belong to the `start` pass.
   let live: Bool
@@ -53,8 +81,11 @@ final class DyldImageLoadObserver {
     /// At least one subscriber is attached; otherwise the callback returns before `dladdr`.
     var enabled = false
     var registrationStarted = false
-    /// False until the registration call returns: earlier callbacks are its replay.
+    /// False until the registration call returns.
     var live = false
+    /// Header addresses loaded before registration; a callback for any other header is live.
+    var snapshot: UnsafeMutablePointer<UnsafeRawPointer?>?
+    var snapshotCount = 0
     var callbacks = 0
     var replayedImages = 0
     /// `_dyld_image_count()` right after the registration call returned.
@@ -92,8 +123,10 @@ final class DyldImageLoadObserver {
     flags.pointee.registrationStarted = true
     os_unfair_lock_unlock(lock)
     if register {
+      InjectionNeedles.prepare()  // before registration: no lazy init under the loader lock
       registration.enter()
       DispatchQueue.global(qos: .utility).async { [self] in
+        takeSnapshot()
         _dyld_register_func_for_add_image(dyldImageAdded)
         let images = Int(_dyld_image_count())
         os_unfair_lock_lock(lock)
@@ -105,6 +138,35 @@ final class DyldImageLoadObserver {
       }
     }
     return subscription
+  }
+
+  /// Records the headers loaded so far. A load is replay only if its header is in this set, so a
+  /// `dlopen` on another thread between registration returning and `live` flipping is still
+  /// reported as live. Images that load between this snapshot and the registration (a tiny
+  /// window) are replayed but also reported live, which is accurate: they loaded after
+  /// observation began.
+  private func takeSnapshot() {
+    let count = Int(_dyld_image_count())
+    let headers = UnsafeMutablePointer<UnsafeRawPointer?>.allocate(capacity: max(count, 1))
+    var stored = 0
+    for index in 0..<count {
+      guard let header = _dyld_get_image_header(UInt32(index)) else { continue }
+      headers[stored] = UnsafeRawPointer(header)
+      stored += 1
+    }
+    os_unfair_lock_lock(lock)
+    flags.pointee.snapshot = headers
+    flags.pointee.snapshotCount = stored
+    os_unfair_lock_unlock(lock)
+  }
+
+  /// True unless `header` was already loaded when observation began. Allocation-free.
+  func isLive(_ header: UnsafeRawPointer) -> Bool {
+    os_unfair_lock_lock(lock)
+    defer { os_unfair_lock_unlock(lock) }
+    guard let snapshot = flags.pointee.snapshot else { return false }
+    for index in 0..<flags.pointee.snapshotCount where snapshot[index] == header { return false }
+    return true
   }
 
   /// Waits until the one-time registration (and its replay) has returned.
@@ -120,12 +182,12 @@ final class DyldImageLoadObserver {
   }
 
   /// The dyld callback body. Runs under the loader lock on the loading (or registering) thread.
-  fileprivate func imageAdded(_ header: UnsafePointer<mach_header>) {
+  func imageAdded(_ header: UnsafePointer<mach_header>) {
     os_unfair_lock_lock(lock)
     flags.pointee.callbacks += 1
     let enabled = flags.pointee.enabled
-    let live = flags.pointee.live
     os_unfair_lock_unlock(lock)
+    let live = isLive(UnsafeRawPointer(header))
     var info = Dl_info()
     guard enabled, dladdr(header, &info) != 0, let path = info.dli_fname else { return }
     imagePathAdded(path, live: live)

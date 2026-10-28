@@ -11,7 +11,13 @@ final class IntegrityMonitorConfigTests: XCTestCase {
     XCTAssertEqual(config.effectiveInterval, 30)
   }
 
-  func testIntervalIsClampedToFiveSeconds() {
+  func testIntervalIsClampedToTheSupportedRange() {
+    XCTAssertEqual(IntegrityMonitorConfig(interval: 86_400).effectiveInterval, 86_400)
+    XCTAssertEqual(IntegrityMonitorConfig(interval: 86_401).effectiveInterval, 86_400)
+    XCTAssertEqual(IntegrityMonitorConfig(interval: .infinity).effectiveInterval, 86_400)
+    XCTAssertEqual(IntegrityMonitorConfig(interval: -.infinity).effectiveInterval, 5)
+    XCTAssertEqual(IntegrityMonitorConfig(interval: 1e12).effectiveInterval, 86_400)
+
     XCTAssertEqual(IntegrityMonitorConfig(interval: 1).effectiveInterval, 5)
     XCTAssertEqual(IntegrityMonitorConfig(interval: -3).effectiveInterval, 5)
     XCTAssertEqual(IntegrityMonitorConfig(interval: .nan).effectiveInterval, 5)
@@ -21,7 +27,7 @@ final class IntegrityMonitorConfigTests: XCTestCase {
 }
 
 final class IntegrityMonitorTests: XCTestCase {
-  private let gadget = "/private/var/containers/fridagadget.dylib"
+  private let gadget = "fridagadget.dylib"
   private var probe: FakeProbe!
   private var fake: FakeMonitorEnvironment!
   private var kit: MobileHardeningKit!
@@ -67,7 +73,7 @@ final class IntegrityMonitorTests: XCTestCase {
 
   func testFirstPassReportsEveryFindingAsDetected() {
     probe.existingPaths = ["/var/jb"]
-    probe.imageNames = [gadget]
+    probe.imageNames = ["/private/var/containers/" + gadget]
     probe.debuggerAttached = true
     probe.codeSignature = false
     start()
@@ -100,7 +106,7 @@ final class IntegrityMonitorTests: XCTestCase {
   func testScreenAndDisplayTypesStayOffTheIntegrityStream() {
     probe.capture.captured = true
     probe.screenCount = 2
-    probe.imageNames = [gadget]
+    probe.imageNames = ["/private/var/containers/" + gadget]
     start()
     XCTAssertEqual(summary(take()), ["instrumentation:detected:start"])
 
@@ -113,7 +119,7 @@ final class IntegrityMonitorTests: XCTestCase {
   }
 
   func testUnchangedPassesStaySilent() {
-    probe.imageNames = [gadget]
+    probe.imageNames = ["/private/var/containers/" + gadget]
     start()
     XCTAssertEqual(summary(take()), ["instrumentation:detected:start"])
 
@@ -125,26 +131,26 @@ final class IntegrityMonitorTests: XCTestCase {
   }
 
   func testChangedArtifactsAndTechniquesAreReportedAsChanged() {
-    probe.imageNames = [gadget]
+    probe.imageNames = ["/private/var/containers/" + gadget]
     start()
     _ = take()
 
-    probe.imageNames = [gadget, "/usr/lib/libhooker.dylib"]
+    probe.imageNames = ["/private/var/containers/" + gadget, "/usr/lib/libhooker.dylib"]
     fake.fireTimer()
     let changed = take()
     XCTAssertEqual(summary(changed), ["instrumentation:changed:interval"])
     XCTAssertEqual(
-      changed.first?.metadata["artifacts"] as? [String], [gadget, "/usr/lib/libhooker.dylib"])
+      changed.first?.metadata["artifacts"] as? [String], [gadget, "libhooker.dylib"])
 
     // Same artifacts in a different order are the same finding.
-    probe.imageNames = ["/usr/lib/libhooker.dylib", gadget]
+    probe.imageNames = ["/usr/lib/libhooker.dylib", "/private/var/containers/" + gadget]
     fake.fireTimer()
     XCTAssertTrue(take().isEmpty)
   }
 
   func testClearedFindingsCarryTheLastMetadata() {
     probe.debuggerAttached = true
-    probe.imageNames = [gadget]
+    probe.imageNames = ["/private/var/containers/" + gadget]
     start()
     _ = take()
 
@@ -194,7 +200,7 @@ final class IntegrityMonitorTests: XCTestCase {
   // MARK: lifecycle
 
   func testIntervalPausesWhileInactiveAndResumesWithAFullPass() {
-    probe.imageNames = [gadget]
+    probe.imageNames = ["/private/var/containers/" + gadget]
     start()
     _ = take()
 
@@ -242,7 +248,7 @@ final class IntegrityMonitorTests: XCTestCase {
   }
 
   func testRestartReplacesTheSessionAndReportsAgain() {
-    probe.imageNames = [gadget]
+    probe.imageNames = ["/private/var/containers/" + gadget]
     var first: [HardeningSignal] = []
     kit.startMonitoring { first.append($0) }
     start()
@@ -342,7 +348,7 @@ final class IntegrityMonitorTests: XCTestCase {
 
     probe.existingPaths = ["/var/jb"]
     probe.debuggerAttached = true
-    probe.imageNames = [gadget]
+    probe.imageNames = ["/private/var/containers/" + gadget]
     probe.imageLoads.deliver([ImageLoad(path: gadget, live: true)])
 
     let events = take()
@@ -376,14 +382,14 @@ final class IntegrityMonitorTests: XCTestCase {
   }
 
   func testReplayedImagesBelongToTheStartPass() {
-    probe.imageNames = [gadget]
+    probe.imageNames = ["/private/var/containers/" + gadget]
     start()
     _ = take()
 
     probe.imageLoads.deliver([ImageLoad(path: gadget, live: false)])
     XCTAssertTrue(take().isEmpty, "replay of an already reported image is not a new finding")
 
-    let unloaded = "/usr/lib/ellekit.dylib"
+    let unloaded = "ellekit.dylib"
     probe.imageLoads.deliver([ImageLoad(path: unloaded, live: false)])
     let events = take()
     XCTAssertEqual(summary(events), ["instrumentation:changed:start"])
@@ -392,7 +398,7 @@ final class IntegrityMonitorTests: XCTestCase {
   }
 
   func testALiveLoadOfAReplayedImageAddsTheLoadTechnique() {
-    probe.imageNames = [gadget]
+    probe.imageNames = ["/private/var/containers/" + gadget]
     start()
     probe.imageLoads.deliver([ImageLoad(path: gadget, live: false)])
     _ = take()

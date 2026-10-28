@@ -5,6 +5,8 @@ import UIKit
 public struct IntegrityMonitorConfig: Equatable {
   /// The shortest interval the monitor runs at.
   public static let minimumInterval: TimeInterval = 5
+  /// The longest interval the monitor runs at (24 hours).
+  public static let maximumInterval: TimeInterval = 24 * 60 * 60
 
   /// Seconds between runtime-tier passes (instrumentation and debugger) while the app is active.
   public var interval: TimeInterval = 30
@@ -16,9 +18,10 @@ public struct IntegrityMonitorConfig: Equatable {
     self.checkOnResume = checkOnResume
   }
 
-  /// `interval` clamped to at least `minimumInterval` (NaN clamps too).
+  /// `interval` clamped to [`minimumInterval`, `maximumInterval`]; NaN becomes the minimum.
   public var effectiveInterval: TimeInterval {
-    interval >= Self.minimumInterval ? interval : Self.minimumInterval
+    guard !interval.isNaN else { return Self.minimumInterval }
+    return min(max(interval, Self.minimumInterval), Self.maximumInterval)
   }
 }
 

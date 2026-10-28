@@ -541,7 +541,7 @@ final class DetectorLogicTests: XCTestCase {
   }
 
   func testInstrumentationMatchesLoadedImagesCaseInsensitivelyAndBoundsOutput() {
-    let long = "/private/var/" + String(repeating: "x", count: 200) + "/FridaGadget.dylib"
+    let long = "/private/var/" + String(repeating: "x", count: 200) + "FridaGadget.dylib"
     let names =
       [long, long, "/usr/lib/libSystem.dylib"]
       + (0..<10).map { "/usr/lib/ellekit\($0).dylib" }
@@ -550,8 +550,9 @@ final class DetectorLogicTests: XCTestCase {
     let artifacts = signal?.metadata["artifacts"] as? [String]
     XCTAssertEqual(artifacts?.count, 8)
     XCTAssertEqual(artifacts?.first?.count, 120)
-    XCTAssertTrue(artifacts?.first?.hasSuffix("/fridagadget.dylib") ?? false)
-    XCTAssertEqual(artifacts?.filter { $0.hasSuffix("/fridagadget.dylib") }.count, 1)
+    XCTAssertTrue(artifacts?.first?.hasSuffix("fridagadget.dylib") ?? false)
+    XCTAssertFalse(artifacts?.contains { $0.contains("/") } ?? true)
+    XCTAssertEqual(artifacts?.filter { $0.hasSuffix("fridagadget.dylib") }.count, 1)
     XCTAssertFalse(artifacts?.contains { $0.contains("libsystem") } ?? true)
     XCTAssertEqual(signal?.metadata["techniques"] as? [String], ["dyldImage"])
   }
@@ -561,15 +562,22 @@ final class DetectorLogicTests: XCTestCase {
       "/Library/MobileSubstrate/MobileSubstrate.dylib",
       "/usr/lib/CydiaSubstrate.framework/CydiaSubstrate", "/usr/lib/libsubstitute.dylib",
       "/var/jb/usr/lib/libhooker.dylib", "/var/jb/usr/lib/ellekit.dylib",
-      "/usr/lib/xposed.dylib", "/private/var/containers/FridaGadget.dylib",
-      "/usr/lib/frida-agent.dylib",
+      "/private/var/containers/FridaGadget.dylib", "/usr/lib/frida/frida-agent.dylib",
+      "/usr/lib/frida-gadget.dylib",
     ]
-    let misses = ["/usr/lib/SUBSTRATE.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/gadget.dylib"]
+    let misses = [
+      "/usr/lib/SUBSTRATE.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/gadget.dylib",
+      "/usr/lib/xposed.dylib", "/usr/lib/substitute.dylib",
+      "/var/containers/Bundle/Application/X/TGIFridays.app/TGIFridays",
+      "/var/containers/Bundle/Application/X/TGIFridays.app/Frameworks/Friday.framework/Friday",
+    ]
     let signal = snapshot(FakeProbe(imageNames: misses + hits)).first {
       $0.type == .instrumentation
     }
 
-    XCTAssertEqual(signal?.metadata["artifacts"] as? [String], hits.map { $0.lowercased() })
+    XCTAssertEqual(
+      signal?.metadata["artifacts"] as? [String],
+      hits.map { String($0.lowercased().split(separator: "/").last ?? "") })
     XCTAssertTrue(snapshot(FakeProbe(imageNames: misses)).isEmpty)
   }
 
