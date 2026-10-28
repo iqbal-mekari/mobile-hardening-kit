@@ -313,10 +313,7 @@ struct SystemProbe: HardeningProbe {
 
   var isApplicationActive: Bool { UIApplication.shared.applicationState == .active }
 
-  var isiOSAppOnMac: Bool {
-    if #available(iOS 14.0, *) { return ProcessInfo.processInfo.isiOSAppOnMac }
-    return false
-  }
+  var isiOSAppOnMac: Bool { ProcessInfo.processInfo.isiOSAppOnMac }
 
   var captureSource: String {
     if #available(iOS 17.0, *) { return "sceneCaptureState" }
@@ -400,7 +397,7 @@ struct SystemProbe: HardeningProbe {
   }
 }
 
-/// iOS 13–16 capture changes: `UIScreen.capturedDidChangeNotification`.
+/// iOS 15–16 capture changes: `UIScreen.capturedDidChangeNotification`.
 final class ScreenCapturedObservation: CaptureObservation {
   private var token: NSObjectProtocol?
 
