@@ -13,8 +13,14 @@ final class HardeningSignalTests: XCTestCase {
 
     XCTAssertEqual(Set(dictionary.keys), ["type", "observedAt", "metadata"])
     XCTAssertEqual(dictionary["type"] as? String, "externalDisplay")
-    XCTAssertEqual(dictionary["observedAt"] as? String, "2026-01-02T03:04:05Z")
+    XCTAssertEqual(dictionary["observedAt"] as? String, "2026-01-02T03:04:05.000Z")
     XCTAssertEqual((dictionary["metadata"] as? [String: Int])?["displayCount"], 1)
+  }
+
+  func testObservedAtCarriesMillisecondsLikeAndroid() {
+    let signal = HardeningSignal(
+      type: .root, observedAt: Date(timeIntervalSince1970: 1_767_323_045.25))
+    XCTAssertEqual(signal.dictionary["observedAt"] as? String, "2026-01-02T03:04:05.250Z")
   }
 
   func testMetadataDefaultsToEmpty() {
@@ -79,14 +85,9 @@ final class MobileHardeningKitTests: XCTestCase {
   override func tearDown() {
     kit.setScreenProtection(.off)
     kit.stopObserving()
+    kit.stopMonitoring()
     kit = nil
     super.tearDown()
-  }
-
-  private func pumpMainQueue() {
-    let done = expectation(description: "main queue drained")
-    DispatchQueue.main.async { done.fulfill() }
-    wait(for: [done], timeout: 2)
   }
 
   // MARK: snapshot
@@ -136,6 +137,8 @@ final class MobileHardeningKitTests: XCTestCase {
 
     let screenshot = received.first { $0.type == .screenshotTaken }
     XCTAssertEqual(screenshot?.metadata["active"] as? Bool, true)
+    XCTAssertEqual(
+      screenshot?.metadata["source"] as? String, "userDidTakeScreenshotNotification")
   }
 
   func testObservingReportsExternalDisplayConnectionChanges() {
@@ -490,94 +493,6 @@ final class ScreenProtectionTests: XCTestCase {
 
 // MARK: - Detector logic with an injected environment
 
-private final class FakeCapture {
-  var captured: Bool
-  private var handlers: [ObjectIdentifier: () -> Void] = [:]
-  var activeObservations: Int { handlers.count }
-
-  init(captured: Bool = false) {
-    self.captured = captured
-  }
-
-  func observe(_ onChange: @escaping () -> Void) -> CaptureObservation {
-    let observation = Observation(owner: self)
-    handlers[ObjectIdentifier(observation)] = onChange
-    return observation
-  }
-
-  func change(to captured: Bool) {
-    self.captured = captured
-    for handler in handlers.values { handler() }
-  }
-
-  private final class Observation: CaptureObservation {
-    weak var owner: FakeCapture?
-    init(owner: FakeCapture) { self.owner = owner }
-    func cancel() { owner?.handlers[ObjectIdentifier(self)] = nil }
-  }
-}
-
-private final class FakeProbe: HardeningProbe {
-  var existingPaths: Set<String>
-  var openableSchemes: Set<String>
-  var imageNames: [String]
-  var debuggerAttached: Bool
-  var capture: FakeCapture
-  var screenCount: Int
-  var codeSignature: Bool
-  var window: UIWindow?
-  var applicationActive = true
-  var isiOSAppOnMac = false
-  let captureSource = "fakeSource"
-
-  init(
-    existingPaths: Set<String> = [], openableSchemes: Set<String> = [], imageNames: [String] = [],
-    debuggerAttached: Bool = false, capture: FakeCapture = FakeCapture(), screenCount: Int = 1,
-    codeSignature: Bool = true, window: UIWindow? = nil
-  ) {
-    self.existingPaths = existingPaths
-    self.openableSchemes = openableSchemes
-    self.imageNames = imageNames
-    self.debuggerAttached = debuggerAttached
-    self.capture = capture
-    self.screenCount = screenCount
-    self.codeSignature = codeSignature
-    self.window = window
-  }
-
-  func fileExists(atPath path: String) -> Bool { existingPaths.contains(path) }
-  func canOpen(scheme: String) -> Bool { openableSchemes.contains(scheme) }
-  func loadedImageNames() -> [String] { imageNames }
-  func isDebuggerAttached() -> Bool { debuggerAttached }
-  func isScreenCaptured() -> Bool { capture.captured }
-  func observeCaptureChanges(_ onChange: @escaping () -> Void) -> CaptureObservation {
-    capture.observe(onChange)
-  }
-  func hasCodeSignature() -> Bool { codeSignature }
-  func keyWindow() -> UIWindow? { window }
-  var isApplicationActive: Bool { applicationActive }
-}
-
-private final class FakeSecureContainer: SecureCaptureContainer {
-  var result = SecureCaptureAttachResult.attached
-  private(set) var attachedWindow: UIWindow?
-  private(set) var secure = false
-  private(set) var attachCount = 0
-
-  func attach(to window: UIWindow) -> SecureCaptureAttachResult {
-    attachCount += 1
-    if result == .attached { attachedWindow = window }
-    return result
-  }
-
-  func setSecure(_ secure: Bool) { self.secure = secure }
-
-  func detach() {
-    attachedWindow = nil
-    secure = false
-  }
-}
-
 final class DetectorLogicTests: XCTestCase {
   private func snapshot(_ probe: FakeProbe) -> [HardeningSignal] {
     MobileHardeningKit(probe: probe).snapshot().filter { $0.type != .emulator }
@@ -585,6 +500,23 @@ final class DetectorLogicTests: XCTestCase {
 
   func testCleanEnvironmentReportsNothing() {
     XCTAssertTrue(snapshot(FakeProbe()).isEmpty)
+  }
+
+  func testDetectSkipsTypesWithoutAnIOSDetector() {
+    let kit = MobileHardeningKit(probe: FakeProbe(debuggerAttached: true))
+    XCTAssertTrue(kit.detect([.root, .devModeEnabled, .screenshotTaken]).isEmpty)
+    XCTAssertEqual(kit.detect([.debuggerAttach]).map(\.type), [.debuggerAttach])
+  }
+
+  func testJailbreakTechniquesNameTheEvidence() {
+    func techniques(_ probe: FakeProbe) -> [String]? {
+      snapshot(probe).first { $0.type == .jailbreak }?.metadata["techniques"] as? [String]
+    }
+    XCTAssertEqual(techniques(FakeProbe(existingPaths: ["/var/jb"])), ["paths"])
+    XCTAssertEqual(techniques(FakeProbe(openableSchemes: ["cydia://"])), ["urlSchemes"])
+    XCTAssertEqual(
+      techniques(FakeProbe(existingPaths: ["/etc/apt"], openableSchemes: ["sileo://"])),
+      ["paths", "urlSchemes"])
   }
 
   func testJailbreakReportsKnownPathsAndSchemesBounded() {
@@ -611,7 +543,7 @@ final class DetectorLogicTests: XCTestCase {
   func testInstrumentationMatchesLoadedImagesCaseInsensitivelyAndBoundsOutput() {
     let long = "/private/var/" + String(repeating: "x", count: 200) + "/FridaGadget.dylib"
     let names =
-      [long, "/usr/lib/SUBSTRATE.dylib", "/usr/lib/libSystem.dylib"]
+      [long, long, "/usr/lib/libSystem.dylib"]
       + (0..<10).map { "/usr/lib/ellekit\($0).dylib" }
     let signal = snapshot(FakeProbe(imageNames: names)).first { $0.type == .instrumentation }
 
@@ -619,11 +551,48 @@ final class DetectorLogicTests: XCTestCase {
     XCTAssertEqual(artifacts?.count, 8)
     XCTAssertEqual(artifacts?.first?.count, 120)
     XCTAssertTrue(artifacts?.first?.hasSuffix("/fridagadget.dylib") ?? false)
+    XCTAssertEqual(artifacts?.filter { $0.hasSuffix("/fridagadget.dylib") }.count, 1)
     XCTAssertFalse(artifacts?.contains { $0.contains("libsystem") } ?? true)
+    XCTAssertEqual(signal?.metadata["techniques"] as? [String], ["dyldImage"])
+  }
+
+  func testInstrumentationNeedlesAreNarrowedToInjectionFrameworks() {
+    let hits = [
+      "/Library/MobileSubstrate/MobileSubstrate.dylib",
+      "/usr/lib/CydiaSubstrate.framework/CydiaSubstrate", "/usr/lib/libsubstitute.dylib",
+      "/var/jb/usr/lib/libhooker.dylib", "/var/jb/usr/lib/ellekit.dylib",
+      "/usr/lib/xposed.dylib", "/private/var/containers/FridaGadget.dylib",
+      "/usr/lib/frida-agent.dylib",
+    ]
+    let misses = ["/usr/lib/SUBSTRATE.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/gadget.dylib"]
+    let signal = snapshot(FakeProbe(imageNames: misses + hits)).first {
+      $0.type == .instrumentation
+    }
+
+    XCTAssertEqual(signal?.metadata["artifacts"] as? [String], hits.map { $0.lowercased() })
+    XCTAssertTrue(snapshot(FakeProbe(imageNames: misses)).isEmpty)
   }
 
   func testCleanImageListIsNotInstrumentation() {
     XCTAssertTrue(snapshot(FakeProbe(imageNames: ["/usr/lib/libSystem.dylib"])).isEmpty)
+  }
+
+  func testInstrumentationMetadataMergesObservedLoads() {
+    XCTAssertNil(MobileHardeningKit.instrumentationMetadata(listed: [], loads: []))
+
+    let live = MobileHardeningKit.instrumentationMetadata(
+      listed: ["/a/frida.dylib"], loads: [ImageLoad(path: "/a/frida.dylib", live: true)])
+    XCTAssertEqual(live?["artifacts"] as? [String], ["/a/frida.dylib"])
+    XCTAssertEqual(live?["techniques"] as? [String], ["dyldImage", "dyldImageLoad"])
+
+    let unlisted = MobileHardeningKit.instrumentationMetadata(
+      listed: [], loads: [ImageLoad(path: "/b/frida.dylib", live: true)])
+    XCTAssertEqual(unlisted?["artifacts"] as? [String], ["/b/frida.dylib"])
+    XCTAssertEqual(unlisted?["techniques"] as? [String], ["dyldImageLoad"])
+
+    let replayed = MobileHardeningKit.instrumentationMetadata(
+      listed: [], loads: [ImageLoad(path: "/c/frida.dylib", live: false)])
+    XCTAssertEqual(replayed?["techniques"] as? [String], ["dyldImage"])
   }
 
   func testDebuggerCaptureAndExternalDisplayAreReported() {
@@ -632,6 +601,8 @@ final class DetectorLogicTests: XCTestCase {
 
     XCTAssertEqual(
       signals.map(\.type), [.debuggerAttach, .screenCaptureActive, .externalDisplay])
+    XCTAssertEqual(signals[0].metadata["traced"] as? Bool, true)
+    XCTAssertEqual(signals[0].metadata["techniques"] as? [String], ["pTraced"])
     XCTAssertEqual(signals[1].metadata["captured"] as? Bool, true)
     XCTAssertEqual(signals[1].metadata["source"] as? String, "fakeSource")
     XCTAssertEqual(signals[2].metadata["displayCount"] as? Int, 2)
@@ -690,11 +661,14 @@ final class CodeSignatureParsingTests: XCTestCase {
   }
 
   /// A 64-bit Mach-O header (32 bytes) followed by `commands` as (cmd, size, payload) triples.
-  private func macho(magic: UInt32? = nil, count: UInt32? = nil, commands: [(UInt32, UInt32)])
-    -> Data
-  {
+  private func macho(
+    magic: UInt32? = nil, count: UInt32? = nil, sizeOfCommands: UInt32? = nil,
+    commands: [(UInt32, UInt32)]
+  ) -> Data {
     var bytes = word(magic ?? magic64) + [UInt8](repeating: 0, count: 12)
-    bytes += word(count ?? UInt32(commands.count)) + [UInt8](repeating: 0, count: 12)
+    bytes += word(count ?? UInt32(commands.count))
+    bytes += word(sizeOfCommands ?? commands.reduce(0) { $0 + max($1.1, 8) })
+    bytes += [UInt8](repeating: 0, count: 8)
     for (command, size) in commands {
       bytes += word(command) + word(size)
       bytes += [UInt8](repeating: 0, count: max(0, Int(size) - 8))
@@ -731,5 +705,41 @@ final class CodeSignatureParsingTests: XCTestCase {
 
   func testRealHostBinaryParsesWithoutCrashing() {
     _ = SystemProbe().hasCodeSignature()
+  }
+
+  // MARK: bounded read from disk
+
+  private func file(_ data: Data) throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("macho-\(UUID().uuidString)")
+    try data.write(to: url)
+    addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+    return url
+  }
+
+  func testReadsOnlyTheHeaderAndLoadCommands() throws {
+    let image = macho(commands: [(0x19, 16), (0x1d, 16)])
+    let url = try file(image + Data(repeating: 0xab, count: 4096))
+
+    let read = try XCTUnwrap(SystemProbe.readHeaderAndLoadCommands(of: url))
+
+    XCTAssertEqual(read, image)
+    XCTAssertTrue(SystemProbe.containsCodeSignature(read))
+  }
+
+  func testReadKeepsTruncatedCommandsForTheParser() throws {
+    let image = macho(sizeOfCommands: 64, commands: [(0x19, 16)])
+    XCTAssertEqual(SystemProbe.readHeaderAndLoadCommands(of: try file(image)), image)
+    let headerOnly = macho(sizeOfCommands: 16, commands: [])
+    XCTAssertEqual(SystemProbe.readHeaderAndLoadCommands(of: try file(headerOnly)), headerOnly)
+  }
+
+  func testReadRejectsMissingShortAndOversizedFiles() throws {
+    let missing = FileManager.default.temporaryDirectory.appendingPathComponent("absent-macho")
+    XCTAssertNil(SystemProbe.readHeaderAndLoadCommands(of: missing))
+    XCTAssertNil(SystemProbe.readHeaderAndLoadCommands(of: try file(Data([0xcf, 0xfa]))))
+    let oversized = macho(
+      sizeOfCommands: UInt32(SystemProbe.maxLoadCommandsSize + 1), commands: [(0x1d, 16)])
+    XCTAssertNil(SystemProbe.readHeaderAndLoadCommands(of: try file(oversized)))
   }
 }
