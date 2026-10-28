@@ -159,7 +159,7 @@ class MobileHardeningKitTest {
     val signal = kit(FakeFiles(contents = mapOf("/proc/self/maps" to maps))).snapshot().single()
     assertEquals(HardeningSignalType.INSTRUMENTATION, signal.type)
     assertEquals(
-      listOf("/data/local/tmp/frida-agent-64.so", "/data/app/lsposed.so"),
+      listOf("frida-agent-64.so", "lsposed.so"),
       signal.metadata["artifacts"]
     )
     assertEquals(0, signal.metadata["tracerPort"])

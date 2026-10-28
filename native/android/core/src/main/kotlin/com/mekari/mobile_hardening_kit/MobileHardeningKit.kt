@@ -205,7 +205,7 @@ class MobileHardeningKit internal constructor(
   /** Marker keywords found in the root, mount-point, filesystem-type and source fields of `/proc/self/mountinfo`. */
   private fun mountMarkers(): List<String> {
     val rows = runCatching { files.readLines("/proc/self/mountinfo") }.getOrDefault(emptyList()).map { row ->
-      val fields = row.trim().lowercase().split(Regex("\\s+"))
+      val fields = row.trim().lowercase().split(WHITESPACE)
       val separator = fields.indexOf("-")
       fields.drop(3).take(2) + if (separator >= 0) fields.drop(separator + 1).take(2) else emptyList()
     }
@@ -216,7 +216,7 @@ class MobileHardeningKit internal constructor(
 
   private fun readMappings(): List<Mapping> =
     runCatching { files.readLines("/proc/self/maps") }.getOrDefault(emptyList()).mapNotNull { row ->
-      val columns = row.trim().split(Regex("\\s+"), limit = 6)
+      val columns = row.trim().split(WHITESPACE, limit = 6)
       if (columns.size < 2) null else Mapping(columns[1], columns.getOrElse(5) { "" }.removeSuffix(" (deleted)"))
     }
 
@@ -228,10 +228,12 @@ class MobileHardeningKit internal constructor(
 
   private fun instrumentationSignal(): HardeningSignal? {
     val mappings = readMappings()
-    val mapPaths = mappings.map { it.path }.filter { path -> HOOK_TERMS.any(path.lowercase()::contains) }.distinct()
+    val mapPaths = mappings.map { it.path.substringAfterLast('/') }.filter { name ->
+      HOOK_TERMS.any(name.lowercase()::contains)
+    }.distinct()
     val memfdPaths = mappings.filter {
       it.perms.endsWith("xp") && it.path.startsWith("/memfd:") && it.path != "/memfd:jit-cache"
-    }.map { it.path }.distinct()
+    }.map { it.path.substringAfterLast('/') }.distinct()
     val anonRwx = mappings.count { it.perms == "rwxp" && it.path.isEmpty() }
     val artSegments = mappings.count { it.perms == "r-xp" && it.path.endsWith("/libart.so") }
     val threads = threadNames()
@@ -252,7 +254,7 @@ class MobileHardeningKit internal constructor(
     return signal(
       HardeningSignalType.INSTRUMENTATION,
       mapOf(
-        "artifacts" to (mapPaths + memfdPaths + threadArtifacts).distinct().map { it.take(120) }.take(8),
+        "artifacts" to (mapPaths + memfdPaths + threadArtifacts).distinct().map { it.take(MAX_ARTIFACT_LENGTH) }.take(8),
         "tracerPort" to (port ?: 0),
         "anonRwxCount" to anonRwx,
         "artTextSegments" to artSegments,
@@ -281,7 +283,7 @@ class MobileHardeningKit internal constructor(
 
   private fun listeningFridaPort(): Int? = runCatching {
     files.readLines("/proc/net/tcp").drop(1).firstNotNullOfOrNull { row ->
-      val columns = row.trim().split(Regex("\\s+"))
+      val columns = row.trim().split(WHITESPACE)
       if (columns.size > 3 && columns[1].substringAfter(':', "").toIntOrNull(16) in listOf(27042, 27043) &&
         columns[3] == "0A") columns[1].substringAfter(':').toInt(16) else null
     }
@@ -444,8 +446,13 @@ class MobileHardeningKit internal constructor(
       "/system/bin/.ext/.su", "/system/usr/we-need-root/su-backup", "/system/xbin/daemonsu",
       "/data/adb/magisk", "/sbin/.magisk", "/data/adb/ksu", "/data/adb/ap"
     )
+    val WHITESPACE = Regex("\\s+")
     val MOUNT_MARKERS = listOf("magisk", "zygisk", "/adb/modules")
-    val HOOK_TERMS = listOf("frida", "frida-gadget", "xposed", "lsposed", "substrate", "libhooker")
+    /** Matched against the lowercase file name only, so package names like `com.tgifridays.app` never hit. */
+    val HOOK_TERMS = listOf(
+      "frida-agent", "frida-gadget", "libfrida", "libxposed", "xposedbridge", "lsposed", "libsubstrate", "libhooker"
+    )
+    const val MAX_ARTIFACT_LENGTH = 120
     val FRIDA_THREADS = setOf("gum-js-loop", "pool-frida")
     val GLIB_THREADS = setOf("gmain", "gdbus")
   }

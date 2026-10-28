@@ -9,7 +9,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-/** Inputs for [MobileHardeningKit.startMonitoring]. The effective interval is at least 5 seconds. */
+/** Inputs for [MobileHardeningKit.startMonitoring]. The effective interval is clamped to 5 seconds..24 hours. */
 data class IntegrityMonitorConfig(
   /** Runtime-attach check period while the attached activity is started. */
   val intervalMs: Long = 30_000,
@@ -59,7 +59,7 @@ internal class IntegrityMonitor(
   private val listener: HardeningSignalListener,
   private val scan: (IntegrityTier) -> List<HardeningSignal>
 ) : Application.ActivityLifecycleCallbacks {
-  private val intervalMs = maxOf(config.intervalMs, MIN_INTERVAL_MS)
+  private val intervalMs = config.intervalMs.coerceIn(MIN_INTERVAL_MS, MAX_INTERVAL_MS)
   private val checkOnResume = config.checkOnResume
   private var active = true
   private var paused = false
@@ -71,9 +71,14 @@ internal class IntegrityMonitor(
   private val last = mutableMapOf<String, Pair<String, Map<String, Any>>>()
 
   fun start(target: Activity?) {
-    target?.let(::bind)
     submit(IntegrityTier.FULL, "start")
-    scheduleTick()
+    if (target == null) {
+      // Foreground only: with no activity there is nothing to tick for until one attaches.
+      paused = true
+    } else {
+      bind(target)
+      scheduleTick()
+    }
   }
 
   fun checkNow() = submit(IntegrityTier.FULL, "manual")
@@ -178,10 +183,16 @@ internal class IntegrityMonitor(
   override fun onActivityResumed(target: Activity) = Unit
   override fun onActivityPaused(target: Activity) = Unit
   override fun onActivitySaveInstanceState(target: Activity, outState: Bundle) = Unit
-  override fun onActivityDestroyed(target: Activity) = Unit
+  override fun onActivityDestroyed(target: Activity) {
+    if (active && ours(target)) {
+      unbind()
+      pause()
+    }
+  }
 
   private companion object {
     const val MIN_INTERVAL_MS = 5_000L
+    const val MAX_INTERVAL_MS = 86_400_000L
     val RUNTIME_TYPES = listOf(HardeningSignalType.INSTRUMENTATION, HardeningSignalType.DEBUGGER_ATTACH)
     val FULL_TYPES = listOf(
       HardeningSignalType.ROOT, HardeningSignalType.INSTRUMENTATION, HardeningSignalType.DEBUGGER_ATTACH,

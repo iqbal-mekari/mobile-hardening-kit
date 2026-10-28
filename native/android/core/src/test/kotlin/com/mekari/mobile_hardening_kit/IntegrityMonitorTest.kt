@@ -233,7 +233,7 @@ class IntegrityMonitorTest {
   fun aRuntimePassNeverClearsRootButAFullPassDoes() {
     val m = monitor(IntegrityMonitorConfig(intervalMs = 10_000))
     scanned = listOf(root, frida)
-    m.start(null)
+    m.start(startedActivity().get())
     fake.flush()
     received.clear()
 
@@ -262,14 +262,23 @@ class IntegrityMonitorTest {
 
   @Test
   fun intervalDefaultsAndClampsAndReschedulesAfterEachTick() {
-    monitor().start(null)
+    monitor().start(startedActivity().get())
     assertEquals(30_000L, fake.pending().single().delayMs)
     fake.fire()
     assertEquals(30_000L, fake.pending().single().delayMs)
 
     val clamped = FakeEnv()
-    IntegrityMonitor(IntegrityMonitorConfig(intervalMs = 1_000), clamped.env(), { }) { emptyList() }.start(null)
+    IntegrityMonitor(IntegrityMonitorConfig(intervalMs = 1_000), clamped.env(), { }) { emptyList() }.start(startedActivity().get())
     assertEquals(5_000L, clamped.pending().single().delayMs)
+
+    val huge = FakeEnv()
+    IntegrityMonitor(IntegrityMonitorConfig(intervalMs = Long.MAX_VALUE), huge.env(), { }) { emptyList() }
+      .start(startedActivity().get())
+    assertEquals(86_400_000L, huge.pending().single().delayMs)
+    val negative = FakeEnv()
+    IntegrityMonitor(IntegrityMonitorConfig(intervalMs = Long.MIN_VALUE), negative.env(), { }) { emptyList() }
+      .start(startedActivity().get())
+    assertEquals(5_000L, negative.pending().single().delayMs)
     assertEquals(IntegrityMonitorConfig(30_000, true), IntegrityMonitorConfig())
   }
 
@@ -385,15 +394,68 @@ class IntegrityMonitorTest {
   }
 
   @Test
-  fun worksWithoutAnActivity() {
+  fun startedWithoutAnActivityRunsTheStartPassButDoesNotTickUntilOneAttaches() {
     val m = monitor()
     scanned = listOf(frida)
     m.start(null)
     fake.flush()
+    assertEquals(listOf(IntegrityTier.FULL), tiers)
+    assertTrue("foreground only: no timer without an activity", fake.pending().isEmpty())
+
+    m.onAttach(startedActivity().get())
+    fake.flush()
+    assertEquals(listOf(IntegrityTier.FULL, IntegrityTier.FULL), tiers)
+    assertEquals(1, fake.pending().size)
     fake.fire()
     fake.flush()
-    assertEquals(listOf(IntegrityTier.FULL, IntegrityTier.RUNTIME), tiers)
+    assertEquals(IntegrityTier.RUNTIME, tiers.last())
     m.onDetach()
+    m.stop()
+  }
+
+  @Test
+  fun attachingAfterANullStartResumesWithoutAPassWhenCheckOnResumeIsOff() {
+    val m = monitor(IntegrityMonitorConfig(checkOnResume = false))
+    m.start(null)
+    fake.flush()
+    tiers.clear()
+    m.onAttach(startedActivity().get())
+    fake.flush()
+    assertTrue(tiers.isEmpty())
+    assertEquals(1, fake.pending().size)
+    m.stop()
+  }
+
+  @Test
+  fun aStartOfTheAttachedActivityResumesAMonitorStartedWithoutAnActivity() {
+    val controller = startedActivity()
+    val m = monitor()
+    m.start(null)
+    m.onActivityStarted(controller.get())
+    assertTrue("not ours until attached", fake.pending().isEmpty())
+    m.onAttach(controller.get())
+    controller.pause().stop()
+    assertTrue(fake.pending().isEmpty())
+    controller.restart().start()
+    assertEquals(1, fake.pending().size)
+    m.stop()
+  }
+
+  @Test
+  fun destroyingTheAttachedActivityUnbindsAndPausesButOtherActivitiesAreIgnored() {
+    val ours = startedActivity()
+    val other = startedActivity()
+    val m = monitor()
+    m.start(ours.get())
+    m.onActivityDestroyed(other.get())
+    assertEquals(1, fake.pending().size)
+
+    ours.pause().stop().destroy()
+    assertTrue(fake.pending().isEmpty())
+    m.onActivityStarted(ours.get())
+    assertTrue("a late start of the destroyed activity is ignored", fake.pending().isEmpty())
+    m.onAttach(other.get())
+    assertEquals(1, fake.pending().size)
     m.stop()
   }
 
@@ -409,6 +471,7 @@ class IntegrityMonitorTest {
   fun kitMonitoringRunsTiersAndAppliesTheHardeningConfig() {
     val files = fridaFiles()
     val kit = kit(files)
+    kit.attachActivity(startedActivity().get())
     kit.startMonitoring(
       IntegrityMonitorConfig(),
       { received += it },
@@ -452,6 +515,7 @@ class IntegrityMonitorTest {
   @Test
   fun startingAgainReplacesTheSessionAndRestartsFromScratch() {
     val kit = kit(fridaFiles())
+    kit.attachActivity(startedActivity().get())
     val old = mutableListOf<HardeningSignal>()
     kit.startMonitoring(IntegrityMonitorConfig(), { old += it })
     fake.runBackground()
@@ -520,6 +584,7 @@ class IntegrityMonitorTest {
   @Config(sdk = [28, 29, 32, 35]) // API 23: Robolectric cannot initialise android.os.Debug.
   fun aCleanDeviceStaysQuietOnEverySupportedApi() {
     val kit = kit()
+    kit.attachActivity(startedActivity().get())
     kit.startMonitoring(IntegrityMonitorConfig(), { received += it })
     fake.flush()
     fake.fire()

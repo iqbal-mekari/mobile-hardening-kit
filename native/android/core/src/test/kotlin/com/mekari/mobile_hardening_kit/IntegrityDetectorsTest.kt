@@ -121,22 +121,38 @@ class IntegrityDetectorsTest {
   fun fridaGadgetAndHookerNamesMatchMaps() {
     val maps = listOf(
       map("r-xp", "/data/app/libfrida-gadget.so"), map("r--p", "/data/app/libsubstrate.so"),
-      map("r--p", "/data/app/libhooker.so"), map("r--p", "/data/app/XPOSED.jar"), map("r--p", "/system/lib/libc.so")
+      map("r--p", "/data/app/libhooker.so"), map("r--p", "/data/app/XposedBridge.jar"), map("r--p", "/system/lib/libc.so")
     )
     val signal = instrumentation(files(maps))!!
     assertEquals(
-      listOf("/data/app/libfrida-gadget.so", "/data/app/libsubstrate.so", "/data/app/libhooker.so", "/data/app/XPOSED.jar"),
+      listOf("libfrida-gadget.so", "libsubstrate.so", "libhooker.so", "XposedBridge.jar"),
       signal.metadata["artifacts"]
     )
     assertEquals(listOf("maps"), signal.metadata["techniques"])
   }
 
   @Test
+  fun hookTermsMatchOnlyTheFileNameNotTheWholePath() {
+    val maps = listOf(
+      map("r--p", "/data/app/~~x==/com.tgifridays.app-1/base.apk"),
+      map("r-xp", "/system/lib64/libexposedfoo.so"),
+      map("r--p", "/data/app/~~frida-agent==/com.example.app-1/base.apk")
+    )
+    assertNull(instrumentation(files(maps)))
+  }
+
+  @Test
+  fun artifactsKeepOnlyTheFileNameSoInstallTokensAreNotReported() {
+    val signal = instrumentation(files(listOf(map("r--p", "/data/app/~~tok3n==/com.example-1/lib/arm64/libfrida-gadget.so"))))!!
+    assertEquals(listOf("libfrida-gadget.so"), signal.metadata["artifacts"])
+  }
+
+  @Test
   fun artifactsAreBoundedInCountAndLength() {
-    val maps = (1..10).map { map("r--p", "/data/frida-$it.so") } + map("r--p", "/data/frida-" + "x".repeat(200))
+    val maps = (1..10).map { map("r--p", "/data/frida-agent-$it.so") } + map("r--p", "/data/frida-agent-" + "x".repeat(200))
     val artifacts = instrumentation(files(maps))!!.metadata["artifacts"] as List<*>
     assertEquals(8, artifacts.size)
-    val long = instrumentation(files(listOf(map("r--p", "/data/frida-" + "x".repeat(200)))))!!
+    val long = instrumentation(files(listOf(map("r--p", "/data/frida-agent-" + "x".repeat(200)))))!!
     assertEquals(120, (long.metadata["artifacts"] as List<*>).single().toString().length)
   }
 
@@ -164,14 +180,14 @@ class IntegrityDetectorsTest {
   @Test
   fun privateExecutableFridaAgentMemfdIsAHit() {
     val signal = instrumentation(files(listOf(map("r-xp", "/memfd:frida-agent-64.so (deleted)"))))!!
-    assertEquals(listOf("/memfd:frida-agent-64.so"), signal.metadata["artifacts"])
+    assertEquals(listOf("memfd:frida-agent-64.so"), signal.metadata["artifacts"])
     assertEquals(listOf("maps", "memfdExec"), signal.metadata["techniques"])
   }
 
   @Test
   fun memfdExecWorksForUnknownNamesAndNeedsExecPermission() {
     val signal = instrumentation(files(listOf(map("r-xp", "/memfd:payload"), map("rw-p", "/memfd:data"))))!!
-    assertEquals(listOf("/memfd:payload"), signal.metadata["artifacts"])
+    assertEquals(listOf("memfd:payload"), signal.metadata["artifacts"])
     assertEquals(listOf("memfdExec"), signal.metadata["techniques"])
   }
 
@@ -220,7 +236,7 @@ class IntegrityDetectorsTest {
   fun portProbeIsSkippedFromApi29() {
     assertNull(instrumentation(FakeFiles(contents = mapOf("/proc/net/tcp" to fridaPortTcp))))
     val withHit = instrumentation(
-      files(listOf(map("r--p", "/data/frida.so"))).apply { contents["/proc/net/tcp"] = fridaPortTcp }
+      files(listOf(map("r--p", "/data/libfrida.so"))).apply { contents["/proc/net/tcp"] = fridaPortTcp }
     )!!
     assertEquals(0, withHit.metadata["tracerPort"])
     assertFalse("port" in (withHit.metadata["techniques"] as List<*>))
@@ -319,7 +335,7 @@ class IntegrityDetectorsTest {
   @Test
   fun runtimeTierCoversOnlyInstrumentationAndDebugger() {
     ReflectionHelpers.setStaticField(Build::class.java, "TAGS", "test-keys")
-    val fake = files(listOf(map("r--p", "/data/frida.so"))).apply {
+    val fake = files(listOf(map("r--p", "/data/libfrida.so"))).apply {
       contents["/proc/self/status"] = listOf("TracerPid:\t5")
     }
     val kit = MobileHardeningKit(context, fake)
