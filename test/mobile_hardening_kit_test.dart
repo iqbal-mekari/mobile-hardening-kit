@@ -248,6 +248,16 @@ void main() {
             .toMap()['intervalMs'],
         5000,
       );
+      expect(
+        const IntegrityMonitorConfig(interval: Duration(hours: 24))
+            .toMap()['intervalMs'],
+        86400000,
+      );
+      expect(
+        const IntegrityMonitorConfig(interval: Duration(days: 30))
+            .toMap()['intervalMs'],
+        86400000,
+      );
       expect(defaults, const IntegrityMonitorConfig());
       expect(defaults.hashCode, const IntegrityMonitorConfig().hashCode);
       expect(defaults == Object(), isFalse);

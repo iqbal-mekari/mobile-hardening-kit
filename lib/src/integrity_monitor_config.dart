@@ -13,9 +13,12 @@ class IntegrityMonitorConfig {
   /// The smallest interval sent to the platform; shorter values are raised.
   static const Duration minimumInterval = Duration(seconds: 5);
 
+  /// The largest interval sent to the platform; longer values are lowered.
+  static const Duration maximumInterval = Duration(hours: 24);
+
   /// Time between runtime-attach checks (instrumentation and debugger) while
-  /// the app is in the foreground. Values below [minimumInterval] are clamped
-  /// to 5 seconds when sent.
+  /// the app is in the foreground. Values outside [minimumInterval] to
+  /// [maximumInterval] (5 seconds to 24 hours) are clamped when sent.
   final Duration interval;
 
   /// Whether a full pass also runs each time the app returns to the
@@ -23,10 +26,15 @@ class IntegrityMonitorConfig {
   final bool checkOnResume;
 
   /// Listen arguments for the native `integrity_events` channel:
-  /// `{intervalMs, checkOnResume}` with the interval clamped to >= 5 s.
+  /// `{intervalMs, checkOnResume}` with the interval clamped to 5 s - 24 h.
   Map<String, Object?> toMap() => <String, Object?>{
-    'intervalMs': (interval < minimumInterval ? minimumInterval : interval)
-        .inMilliseconds,
+    'intervalMs':
+        (interval < minimumInterval
+                ? minimumInterval
+                : interval > maximumInterval
+                ? maximumInterval
+                : interval)
+            .inMilliseconds,
     'checkOnResume': checkOnResume,
   };
 
