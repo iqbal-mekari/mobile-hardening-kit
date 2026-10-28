@@ -97,11 +97,13 @@ class MobileHardeningKit {
   /// evaded by a tool that is already attached; it never blocks or alters the
   /// app and must not be treated as a security boundary.
   ///
-  /// All listeners share one native monitor session. While it has listeners,
-  /// calling this with a different [config], or from an instance with a
-  /// different signing certificate or trusted accessibility packages, throws a
-  /// [StateError]. After the last listener cancels, a new configuration is
-  /// allowed.
+  /// All listeners share one native monitor session, adopted from whichever
+  /// stream gets the first listener. While it has listeners, calling this with
+  /// a different [config], or from an instance with a different signing
+  /// certificate or trusted accessibility packages, throws a [StateError], and
+  /// listening to a previously obtained stream of a different session fails
+  /// that subscription with a [StateError]. After the last listener cancels, a
+  /// new configuration is allowed.
   Stream<HardeningSignal> integrityEvents([
     IntegrityMonitorConfig config = const IntegrityMonitorConfig(),
   ]) {
@@ -110,19 +112,32 @@ class MobileHardeningKit {
       expectedSigningCertificateSha256,
       trustedAccessibilityPackages,
     );
-    final active = _integritySession;
-    if (_integrityShared.hasListeners && active != null) {
-      if (active != requested) {
-        throw StateError(
-          'integrityEvents is already active with a different configuration; '
-          'cancel all listeners before changing it.',
-        );
-      }
-    } else {
-      _integritySession = requested;
+    if (_integrityShared.hasListeners && _integritySession != requested) {
+      throw StateError(_sessionConflict);
     }
-    return _integrityShared.stream;
+    // The stream is bound to this call's session. Native monitoring starts
+    // with the session of the first listener, never with a later caller's, so
+    // a certificate or package list passed here cannot be silently dropped.
+    return Stream<HardeningSignal>.multi((controller) {
+      if (_integrityShared.hasListeners && _integritySession != requested) {
+        controller
+          ..addErrorSync(StateError(_sessionConflict))
+          ..closeSync();
+        return;
+      }
+      _integritySession = requested;
+      final subscription = _integrityShared.stream.listen(
+        controller.addSync,
+        onError: controller.addErrorSync,
+        onDone: controller.closeSync,
+      );
+      controller.onCancel = subscription.cancel;
+    }, isBroadcast: true);
   }
+
+  static const String _sessionConflict =
+      'integrityEvents is already active with a different configuration; '
+      'cancel all listeners before changing it.';
 
   /// Runs one monitor pass now, for example before a sensitive action.
   ///

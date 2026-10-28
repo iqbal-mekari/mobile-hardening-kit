@@ -325,7 +325,6 @@ void main() {
       final second = kitB.integrityEvents(config).listen((_) {});
       await pump();
       expect(native.listens, hasLength(1));
-      expect(kitA.integrityEvents(config), kitB.integrityEvents(config));
 
       await first.cancel();
       await pump();
@@ -367,6 +366,102 @@ void main() {
       throwsStateError,
     );
 
+    await subscription.cancel();
+  });
+
+  test('a stream keeps the session of its own integrityEvents call', () async {
+    final native = mockNative(integrityChannel);
+    final withCertificate = MobileHardeningKit(
+      expectedSigningCertificateSha256: 'ab:cd',
+    ).integrityEvents();
+    // Created before anyone listens: must not overwrite the session above.
+    final withoutCertificate = MobileHardeningKit().integrityEvents();
+
+    final first = withCertificate.listen((_) {});
+    await pump();
+    expect(
+      native.listens.single,
+      containsPair('expectedSigningCertificateSha256', 'ab:cd'),
+    );
+
+    final errors = <Object>[];
+    var done = false;
+    final second = withoutCertificate.listen(
+      (_) {},
+      onError: errors.add,
+      onDone: () => done = true,
+    );
+    await pump();
+    expect(errors.single, isA<StateError>());
+    expect(done, isTrue);
+    expect(native.listens, hasLength(1));
+
+    // The failed subscription did not disturb the active session.
+    await second.cancel();
+    await pump();
+    expect(native.cancels, 0);
+    await first.cancel();
+    await pump();
+    expect(native.cancels, 1);
+  });
+
+  test('the first listener wins whichever stream was created first', () async {
+    final native = mockNative(integrityChannel);
+    final withCertificate = MobileHardeningKit(
+      expectedSigningCertificateSha256: 'ab:cd',
+    ).integrityEvents();
+    final withoutCertificate = MobileHardeningKit().integrityEvents();
+
+    final first = withoutCertificate.listen((_) {});
+    await pump();
+    expect(
+      native.listens.single,
+      isNot(contains('expectedSigningCertificateSha256')),
+    );
+
+    final errors = <Object>[];
+    final second = withCertificate.listen((_) {}, onError: errors.add);
+    await pump();
+    expect(errors.single, isA<StateError>());
+
+    // The same session joins the existing native subscription.
+    final third = withoutCertificate.listen((_) {});
+    await pump();
+    expect(native.listens, hasLength(1));
+    await first.cancel();
+    await second.cancel();
+    await third.cancel();
+    await pump();
+    expect(native.cancels, 1);
+
+    // After the last listener leaves, the other session can start.
+    final again = withCertificate.listen((_) {});
+    await pump();
+    expect(
+      native.listens.last,
+      containsPair('expectedSigningCertificateSha256', 'ab:cd'),
+    );
+    await again.cancel();
+  });
+
+  test('bound integrity streams forward events, errors, and done', () async {
+    mockNative(
+      integrityChannel,
+      onListen: (events) {
+        events.success(integrityEvent(<String, Object?>{'change': 'detected'}));
+        events.error(code: 'boom', message: 'native failure');
+        events.endOfStream();
+      },
+    );
+    final received = <HardeningSignal>[];
+    final errors = <Object>[];
+    final stream = MobileHardeningKit().integrityEvents();
+    final subscription = stream.listen(received.add, onError: errors.add);
+    await pump();
+    await pump();
+
+    expect(received.single.type, HardeningSignalType.instrumentation);
+    expect(errors.single, isA<PlatformException>());
     await subscription.cancel();
   });
 
