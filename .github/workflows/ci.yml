@@ -77,6 +77,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Validate Gradle wrapper checksums
+        uses: gradle/actions/wrapper-validation@v6
       - name: Lint, unit-test, and enforce coverage for the core
         working-directory: native/android
         run: ./gradlew :core:lintDebug :core:testDebugUnitTest :core:coverageVerification
@@ -106,6 +108,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Validate Gradle wrapper checksums
+        uses: gradle/actions/wrapper-validation@v6
       - name: Install Flutter ${{ env.FLUTTER_VERSION }} from the official repository
         run: |
           git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
