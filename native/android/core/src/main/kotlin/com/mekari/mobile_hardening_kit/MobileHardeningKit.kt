@@ -12,10 +12,6 @@ import android.provider.Settings
 import android.view.WindowManager
 import java.io.File
 import java.security.MessageDigest
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
 
 /**
  * Client-side integrity and display observations. Reports only; never blocks a flow.
@@ -26,7 +22,8 @@ import java.util.TimeZone
  */
 class MobileHardeningKit internal constructor(
   context: Context,
-  private val files: FileAccess
+  private val files: FileAccess,
+  private val monitorEnv: () -> MonitorEnv = MonitorEnv.Companion::system
 ) : DisplayManager.DisplayListener {
   constructor(context: Context) : this(context, SystemFiles)
 
@@ -35,6 +32,7 @@ class MobileHardeningKit internal constructor(
     this.context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
   private var activity: Activity? = null
   private var listener: HardeningSignalListener? = null
+  private var monitor: IntegrityMonitor? = null
   private var protection = ScreenProtection.OFF
   private var originalSecureFlag: Boolean? = null
   private var recentsOverridden = false
@@ -50,39 +48,8 @@ class MobileHardeningKit internal constructor(
       signals.add(signal(type, details.toMap()))
     }
 
-    val rootArtifacts = listOf(
-      "/system/app/Superuser.apk", "/sbin/su", "/system/bin/su", "/system/xbin/su",
-      "/data/local/xbin/su", "/data/local/bin/su", "/system/sd/xbin/su",
-      "/system/bin/.ext/.su", "/system/usr/we-need-root/su-backup", "/system/xbin/daemonsu",
-      "/data/adb/magisk", "/sbin/.magisk", "/data/adb/ksu", "/data/adb/ap"
-    ).filter(files::exists)
-    val testKeys = Build.TAGS?.contains("test-keys") == true
-    val magiskManagerPackage = "com.topjohnwu.magisk"
-    val hasMagiskManager = runCatching {
-      context.packageManager.getPackageInfo(magiskManagerPackage, 0)
-    }.isSuccess
-    val rootDetails = mutableListOf<Pair<String, Any>>()
-    if (rootArtifacts.isNotEmpty()) rootDetails += "artifacts" to rootArtifacts.take(8)
-    if (testKeys) rootDetails += "testKeys" to true
-    if (hasMagiskManager) rootDetails += "managerPackage" to magiskManagerPackage
-    if (rootDetails.isNotEmpty()) add(HardeningSignalType.ROOT, *rootDetails.toTypedArray())
-
-    val maps = runCatching { files.readLines("/proc/self/maps") }.getOrDefault(emptyList())
-    val hookArtifacts = maps.asSequence().filter {
-      val line = it.lowercase()
-      listOf("frida", "gum-js-loop", "gadget", "xposed", "lsposed", "substrate", "libhooker").any(line::contains)
-    }.mapNotNull { row ->
-      row.trim().split(Regex("\\s+"), limit = 6).getOrNull(5)
-        ?.removeSuffix(" (deleted)")?.take(120)
-    }.distinct().take(8).toList()
-    val listeningPort = listeningFridaPort()
-    if (hookArtifacts.isNotEmpty() || listeningPort != null) {
-      add(HardeningSignalType.INSTRUMENTATION, "artifacts" to hookArtifacts, "tracerPort" to (listeningPort ?: 0))
-    }
-
-    if (Debug.isDebuggerConnected() || Debug.waitingForDebugger()) {
-      add(HardeningSignalType.DEBUGGER_ATTACH, "debuggerConnected" to Debug.isDebuggerConnected())
-    }
+    rootSignal()?.let(signals::add)
+    signals += runtimeSignals()
 
     val expectedCertificate = config.expectedSigningCertificateSha256
     if (expectedCertificate != null) {
@@ -143,10 +110,12 @@ class MobileHardeningKit internal constructor(
       (target.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE) != 0
     applyScreenProtection()
     if (listener != null) registerScreenshotCallback(target)
+    monitor?.onAttach(target)
   }
 
   /** Unbinds the activity and restores its original FLAG_SECURE and Recents state. */
   fun detachActivity() {
+    monitor?.onDetach()
     unregisterScreenshotCallback()
     unregisterRecordingCallback()
     activity?.let { target ->
@@ -172,12 +141,142 @@ class MobileHardeningKit internal constructor(
     if (recordingAlreadyRegistered && recordingVisible) emitRecordingState()
   }
 
+  /**
+   * Starts the runtime integrity monitor: re-checks on an interval and on resume and delivers only new,
+   * changed or cleared findings to [listener] on the main thread. Replaces a running monitor. Independent of
+   * [startObserving]. Call from the main thread.
+   */
+  fun startMonitoring(
+    config: IntegrityMonitorConfig,
+    listener: HardeningSignalListener,
+    hardeningConfig: HardeningConfig = HardeningConfig()
+  ) {
+    stopMonitoring()
+    monitor = IntegrityMonitor(config, monitorEnv(), listener) { tier ->
+      if (tier == IntegrityTier.FULL) snapshot(hardeningConfig) else runtimeSignals()
+    }.also { it.start(activity) }
+  }
+
+  /** Stops the monitor and drops its state. Safe to call when not monitoring. */
+  fun stopMonitoring() {
+    monitor?.stop()
+    monitor = null
+  }
+
+  /** Runs one full monitor pass now (trigger `manual`). No-op when not monitoring. */
+  fun checkIntegrityNow() {
+    monitor?.checkNow()
+  }
+
   /** Stops event delivery. Safe to call when not observing. */
   fun stopObserving() {
     listener = null
     displayManager.unregisterDisplayListener(this)
     unregisterScreenshotCallback()
     syncRecordingCallback()
+  }
+
+  /** The runtime-attach tier (instrumentation, debugger); the monitor runs it alone on its interval. */
+  internal fun runtimeSignals(): List<HardeningSignal> = listOfNotNull(instrumentationSignal(), debuggerSignal())
+
+  private fun rootSignal(): HardeningSignal? {
+    val artifacts = ROOT_PATHS.filter(files::exists)
+    val testKeys = Build.TAGS?.contains("test-keys") == true
+    val hasMagiskManager = runCatching {
+      context.packageManager.getPackageInfo(MAGISK_PACKAGE, 0)
+    }.isSuccess
+    val markers = mountMarkers()
+    val techniques = listOfNotNull(
+      "paths".takeIf { artifacts.isNotEmpty() },
+      "buildTags".takeIf { testKeys },
+      "managerPackage".takeIf { hasMagiskManager },
+      "mountinfo".takeIf { markers.isNotEmpty() }
+    )
+    if (techniques.isEmpty()) return null
+    val details = mutableMapOf<String, Any>()
+    if (artifacts.isNotEmpty()) details["artifacts"] = artifacts.take(8)
+    if (testKeys) details["testKeys"] = true
+    if (hasMagiskManager) details["managerPackage"] = MAGISK_PACKAGE
+    if (markers.isNotEmpty()) details["mountMarkers"] = markers
+    details["techniques"] = techniques
+    return signal(HardeningSignalType.ROOT, details)
+  }
+
+  /** Marker keywords found in the root, mount-point, filesystem-type and source fields of `/proc/self/mountinfo`. */
+  private fun mountMarkers(): List<String> {
+    val rows = runCatching { files.readLines("/proc/self/mountinfo") }.getOrDefault(emptyList()).map { row ->
+      val fields = row.trim().lowercase().split(Regex("\\s+"))
+      val separator = fields.indexOf("-")
+      fields.drop(3).take(2) + if (separator >= 0) fields.drop(separator + 1).take(2) else emptyList()
+    }
+    return MOUNT_MARKERS.filter { marker -> rows.any { fields -> fields.any { it.contains(marker) } } }.take(8)
+  }
+
+  private class Mapping(val perms: String, val path: String)
+
+  private fun readMappings(): List<Mapping> =
+    runCatching { files.readLines("/proc/self/maps") }.getOrDefault(emptyList()).mapNotNull { row ->
+      val columns = row.trim().split(Regex("\\s+"), limit = 6)
+      if (columns.size < 2) null else Mapping(columns[1], columns.getOrElse(5) { "" }.removeSuffix(" (deleted)"))
+    }
+
+  private fun threadNames(): List<String> = runCatching {
+    files.list("/proc/self/task").mapNotNull { tid ->
+      runCatching { files.readLines("/proc/self/task/$tid/comm").firstOrNull()?.trim() }.getOrNull()
+    }
+  }.getOrDefault(emptyList()).distinct()
+
+  private fun instrumentationSignal(): HardeningSignal? {
+    val mappings = readMappings()
+    val mapPaths = mappings.map { it.path }.filter { path -> HOOK_TERMS.any(path.lowercase()::contains) }.distinct()
+    val memfdPaths = mappings.filter {
+      it.perms.endsWith("xp") && it.path.startsWith("/memfd:") && it.path != "/memfd:jit-cache"
+    }.map { it.path }.distinct()
+    val anonRwx = mappings.count { it.perms == "rwxp" && it.path.isEmpty() }
+    val artSegments = mappings.count { it.perms == "r-xp" && it.path.endsWith("/libart.so") }
+    val threads = threadNames()
+    val threadPrimary = threads.any(FRIDA_THREADS::contains)
+    val threadArtifacts = if (threadPrimary) {
+      threads.filter { it in FRIDA_THREADS || it in GLIB_THREADS }.map { "thread:$it" }
+    } else emptyList()
+    val port = if (Build.VERSION.SDK_INT <= 28) listeningFridaPort() else null
+
+    val techniques = listOfNotNull(
+      "maps".takeIf { mapPaths.isNotEmpty() },
+      "threadName".takeIf { threadPrimary },
+      "memfdExec".takeIf { memfdPaths.isNotEmpty() },
+      "artSegments".takeIf { artSegments > 1 },
+      "port".takeIf { port != null }
+    )
+    if (techniques.isEmpty()) return null
+    return signal(
+      HardeningSignalType.INSTRUMENTATION,
+      mapOf(
+        "artifacts" to (mapPaths + memfdPaths + threadArtifacts).distinct().map { it.take(120) }.take(8),
+        "tracerPort" to (port ?: 0),
+        "anonRwxCount" to anonRwx,
+        "artTextSegments" to artSegments,
+        "techniques" to techniques + listOfNotNull("anonRwx".takeIf { anonRwx > 0 })
+      )
+    )
+  }
+
+  private fun debuggerSignal(): HardeningSignal? {
+    val connected = Debug.isDebuggerConnected()
+    val jdwp = connected || Debug.waitingForDebugger()
+    val traced = runCatching {
+      files.readLines("/proc/self/status").first { it.startsWith("TracerPid:") }
+        .substringAfter(':').trim().toLong() != 0L
+    }.getOrDefault(false)
+    if (!jdwp && !traced) return null
+    return signal(
+      HardeningSignalType.DEBUGGER_ATTACH,
+      mapOf(
+        "debuggerConnected" to connected,
+        "tracerPid" to traced,
+        "techniques" to listOfNotNull("jdwp".takeIf { jdwp }, "tracerPid".takeIf { traced })
+      )
+    )
   }
 
   private fun listeningFridaPort(): Int? = runCatching {
@@ -206,9 +305,6 @@ class MobileHardeningKit internal constructor(
         .joinToString("") { "%02x".format(it) }
     }
   }.getOrDefault(emptyList())
-
-  private fun isoTimestamp(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
-    .apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date())
 
   private fun signal(type: String, metadata: Map<String, Any>) =
     HardeningSignal(type, isoTimestamp(), metadata)
@@ -341,6 +437,20 @@ class MobileHardeningKit internal constructor(
     )
   }
 
+  private companion object {
+    const val MAGISK_PACKAGE = "com.topjohnwu.magisk"
+    val ROOT_PATHS = listOf(
+      "/system/app/Superuser.apk", "/sbin/su", "/system/bin/su", "/system/xbin/su",
+      "/data/local/xbin/su", "/data/local/bin/su", "/system/sd/xbin/su",
+      "/system/bin/.ext/.su", "/system/usr/we-need-root/su-backup", "/system/xbin/daemonsu",
+      "/data/adb/magisk", "/sbin/.magisk", "/data/adb/ksu", "/data/adb/ap"
+    )
+    val MOUNT_MARKERS = listOf("magisk", "zygisk", "/adb/modules")
+    val HOOK_TERMS = listOf("frida", "frida-gadget", "xposed", "lsposed", "substrate", "libhooker")
+    val FRIDA_THREADS = setOf("gum-js-loop", "pool-frida")
+    val GLIB_THREADS = setOf("gmain", "gdbus")
+  }
+
   override fun onDisplayAdded(displayId: Int) = emitExternalDisplayState()
   override fun onDisplayRemoved(displayId: Int) = emitExternalDisplayState()
   override fun onDisplayChanged(displayId: Int) = emitExternalDisplayState()
@@ -350,9 +460,11 @@ class MobileHardeningKit internal constructor(
 internal interface FileAccess {
   fun exists(path: String): Boolean
   fun readLines(path: String): List<String>
+  fun list(path: String): List<String>
 }
 
 internal object SystemFiles : FileAccess {
   override fun exists(path: String): Boolean = File(path).exists()
   override fun readLines(path: String): List<String> = File(path).readLines()
+  override fun list(path: String): List<String> = File(path).list()?.toList().orEmpty()
 }
