@@ -2,7 +2,7 @@
 
 # Runtime integrity monitor and split event streams (0.4.0)
 
-Branch: `feat/integrity-monitor` (stacked on `feat/screen-protection-redesign`; rebase onto `main` after PR #3 merges) · Target release: `0.4.0` · Status: approved 2026-10-28; Phase 0 in progress
+Branch: `feat/integrity-monitor` (stacked on `feat/screen-protection-redesign`; rebase onto `main` after PR #3 merges) · Target release: `0.4.0` · Status: approved 2026-10-28; Phase 0 complete, implementation not started
 
 ## 1. Goal
 
@@ -24,7 +24,7 @@ The kit stays report-only: it never blocks, kills, or calls anti-debug APIs (`pt
 | D4 | No new signal types. New evidence maps to existing `instrumentation` / `debuggerAttach`; metadata gains `techniques` and monitor fields (§4.3). | Older Dart decoders throw `FormatException` on unknown types (`lib/src/hardening_signal.dart:31-35`); avoids a lockstep upgrade. |
 | D5 | Pure Kotlin / Swift only. NDK-based checks (inline-hook prologue diff, `ArtMethod` entrypoint checks, raw-syscall `/proc` reads) are a separate decision, not in 0.4.0. | Adds a native toolchain, ABI matrix, and per-OS-version fragility to a dependency-light kit. |
 | D6 | No `INTERNET` permission. The Frida port probe via `/proc/net/tcp` runs only on API ≤ 28; no active `connect()` probe. | `/proc/net` is closed to apps from Android 10 (verified on API 32; Android 10 privacy changes). A library must not merge `INTERNET` into consumer manifests for a heuristic. |
-| D7 | LSPosed coverage is **not claimed**. Java-side probes target legacy Xposed/EdXposed; LSPosed stays a documented gap until a technique is verified on device. | LSPosed 1.9.2 loaded a module into the example app on the POCO F1 and the current maps scan did not report it. |
+| D7 | LSPosed is reported only through a low-confidence heuristic (`artSegments`, §5.2), documented as verified on one device; no "LSPosed detection" claim. Java-side `Class.forName` Xposed probes are dropped. | Phase 0 (§11): with a module loaded, LSPosed 1.9.2 leaves no name in maps/threads/fds/mountinfo/environ and hides `XposedBridge` from `Class.forName` on both loaders; only libart's text-segment split was observed. |
 
 ## 3. Non-goals
 
@@ -80,7 +80,7 @@ Both getters return a single cached broadcast stream per kit instance (fixes tod
 - Integrity event metadata = the `snapshot()` metadata for that type plus:
   - `change`: `detected` | `changed` | `cleared` (a cleared event carries the last known metadata).
   - `trigger`: `start` | `resume` | `interval` | `imageLoad` (iOS) | `manual`.
-  - `techniques`: list of evidence sources, e.g. `maps`, `threadName`, `tracerPid`, `memfdExec`, `xposedClass`, `dyldImage`, `dyldImageLoad`, `port`.
+  - `techniques`: list of evidence sources: `maps`, `threadName`, `tracerPid`, `memfdExec`, `anonRwx`, `artSegments`, `mountinfo`, `port` (Android); `dyldImage`, `dyldImageLoad`, `pTraced` (iOS).
 - Diff key: signal type + sorted `techniques` + sorted `artifacts`; timestamps excluded.
 - Screen-event schema alignment: iOS `screenshotTaken` gains `source: "userDidTakeScreenshotNotification"` (keeps `active` for compatibility); iOS `observedAt` gains milliseconds to match Android.
 
@@ -103,12 +103,15 @@ Interval passes run only the runtime-attach tier (instrumentation + debugger) to
 
 | Change | Detail | Evidence |
 |---|---|---|
-| Thread-name scan | `/proc/self/task/*/comm` for Frida thread names; move `gum-js-loop` here (it can never match a maps path) | Readability verified via run-as; **exact Frida thread names unverified**, Phase 0 |
-| `TracerPid` | non-zero in `/proc/self/status` → `debuggerAttach` with `techniques: [tracerPid]` | Readable (verified); misses Frida after its detach (source-cited) |
-| Executable memfd / anonymous mappings | flag `r-xp` `/memfd:` mappings excluding JIT caches | **False-positive baseline unverified** (ART JIT, WebView); ship only if Phase 0 baseline is clean |
-| Narrow maps terms | `gadget` → `frida-gadget`; keep `substrate` / `libhooker` as low-signal | Inference: `gadget` is too broad |
+| Thread-name scan (`threadName`) | `/proc/self/task/*/comm`; report on `gum-js-loop` or `pool-frida`; `gmain` / `gdbus` are generic GLib names, listed as artifacts only alongside a primary hit. Remove `gum-js-loop` from the maps terms. | Verified (§11): attach and spawn add exactly `gum-js-loop`, `gmain`, `gdbus`, `pool-frida`; gone after detach |
+| `TracerPid` (`tracerPid`) | non-zero → `debuggerAttach`. Not a Frida signal. | Verified: Frida's ptrace shows for ~0.2–0.4 s at attach only (2 of ~120 samples at 0.1 s) |
+| Executable memfd (`memfdExec`) | `/memfd:` mapping with `x` permission, private (`p`), name not `jit-cache` | Verified: clean baseline has only shared `r-xs /memfd:jit-cache`; Frida agent is `r-xp /memfd:frida-agent-64.so`; with an LSPosed module loaded a private `r-xp /memfd:jit-cache` appears, hence the name exclusion |
+| Anonymous RWX (`anonRwx`) | count of unnamed `rwxp` mappings > 0; supporting evidence only, never reported alone as Frida | Verified: 0 at baseline/control, 3–6 with Frida, 3–5 **remain after detach**. WebView/JS-engine false positives untested (§10) |
+| ART text split (`artSegments`) | number of `r-xp` segments of `libart.so` > 1 → `instrumentation` (low confidence, "ART hooked") | Verified on API 32 only: 1 → 15 with an LSPosed module loaded, back to 1 when disabled. Other hookers (e.g. Frida Java bridge) may also split it (inference) |
+| Magisk/Zygisk mounts (`mountinfo`) | `/proc/self/mountinfo` markers (`magisk`, `zygisk`, `/adb/modules`) → `root`; start/resume tier only (1139 lines) | Verified readable (run-as) and present on the rooted device, including for unscoped apps; DenyList-unmounted apps untested |
+| Narrow maps terms | `gadget` → `frida-gadget`; keep `substrate` / `libhooker` as low-signal; keep `frida` | `frida-agent` maps match verified; `gadget` too broad (inference) |
 | Port probe | `/proc/net/tcp` only on API ≤ 28 (D6) | Denied on API 32 (verified) |
-| Legacy Xposed probes | `Class.forName("de.robv.android.xposed.XposedBridge")` via system and app class loaders; stack-frame check | Inference; LSPosed isolates its loader (D7) |
+| ~~Legacy Xposed probes~~ | dropped (D7) | Verified: `ClassNotFoundException` on app and system loaders with an LSPosed module loaded; no xposed frames in stack traces |
 | Threading | monitor passes on a single background executor, results posted to the main thread | `/proc` reads on main thread risk jank/StrictMode (inference) |
 | Lifecycle | interval paused when the attached activity stops; resume pass on start | uses existing `attachActivity` / `detachActivity` |
 | Test seams | extend `FileAccess` with `list(dir)`; injectable scheduler and clock | Robolectric + `ShadowLooper` |
@@ -117,12 +120,12 @@ Interval passes run only the runtime-attach tier (instrumentation + debugger) to
 
 | Change | Detail | Evidence |
 |---|---|---|
-| dyld image-load observer | `_dyld_register_func_for_add_image` registered **once per process** (no unregister API), gated by an atomic enabled flag and a weak sink. Callback does only `dladdr` + C-string match, enqueues hits to a private serial queue, emits `trigger: imageLoad`. | Header `mach-o/dyld.h` (Xcode 27 SDK): replays existing images at registration, no unregister (verified). Callback thread unverified |
-| Replay de-dup | registration replay is treated as part of the `start` pass, not separate `imageLoad` events | Inference |
+| dyld image-load observer | `_dyld_register_func_for_add_image` registered **once per process** (no unregister API), **from a background queue** (replay is synchronous on the registering thread, ~30 ms for ~600 images), gated by an atomic enabled flag and a weak sink. Callback does only `dladdr` + `strcasestr` on C strings, enqueues hits to a private serial queue, emits `trigger: imageLoad`. | Simulator-measured (§11): synchronous full replay before the call returns; a second registration replays again; live callbacks run on the `dlopen` caller's thread (can be main); `dladdr` gives absolute paths; no deadlock calling dyld APIs inside |
+| Replay de-dup | hits delivered before the register call returns belong to the `start` pass (flag flipped after return), not `imageLoad` events | Simulator-measured |
 | Interval/resume | `P_TRACED` + image-name scan + jailbreak paths (resume) | Existing detectors |
 | `DYLD_INSERT_LIBRARIES` | `getenv` check at start | Inference; likely stripped for signed apps, low value |
 | Narrow terms | `substrate` → `mobilesubstrate` / `cydiasubstrate`; add `fridagadget` | Inference |
-| Cheaper scans | C-string matching instead of allocating/lowercasing every image name; `hasCodeSignature()` reads header + load commands only | Inference; cost measured in Phase 0 |
+| Cheaper scans | C-string matching instead of allocating/lowercasing every image name; `hasCodeSignature()` reads header + load commands only | Simulator-measured: C-string pass 1.2–3 ms vs 3–48 ms for the current String approach (554–627 images) |
 | Lifecycle | interval paused while not active; resume pass on `didBecomeActive` | existing notifications |
 | Test seams | `HardeningProbe` gains `observeImageLoads` and an injectable timer | hostless XCTest |
 
@@ -217,12 +220,40 @@ Resolved 2026-10-28: D2 approved (deprecate `stream` in 0.4.0); default interval
 | iOS Frida attach / spawn (frida-server) | agent visibility in the dyld image list and add-image callback; image name | jailbroken iPhone (Dopamine/palera1n) |
 | iOS Frida Gadget | load-command / renamed Gadget detection | re-signed build on a physical iPhone |
 | iOS jailbreak tweak runtimes | ElleKit / libhooker / Substitute image names | jailbroken iPhone |
-| iOS `P_TRACED` on device | Xcode attach/detach transitions | physical iPhone |
+| iOS `P_TRACED` on device | Xcode attach/detach transitions (simulator lldb attach verified) | physical iPhone |
+| Android `untrusted_app` readability | Phase 0 read app state as root and via `run-as` (`runas_app` domain), not from the real app domain | confirmed in Phase 2 on the POCO F1 |
+| Android false positives | `memfdExec` / `anonRwx` with WebView or JS engines; `artSegments` on other API levels, ROMs, and with other hookers | WebView test app; other devices |
+| Android classic Xposed / EdXposed, Frida Gadget (repackaged APK), Magisk DenyList | no setup on the device | dedicated test setups |
+| Per-pass cost on Android | not measured in Phase 0 | measured in Phase 2 on the POCO F1 |
+
+Resolved by Phase 0: `memfdExec` ships with the `jit-cache` name exclusion (clean baseline); `mountinfo` ships in the `root` start/resume tier.
 
 Still open:
-1. Ship the memfd check and the mountinfo heuristic only if the Phase 0 baseline is clean, or always behind a `techniques` label?
-2. NDK detectors (D5): schedule a separate research/decision record?
+1. NDK detectors (D5): schedule a separate research/decision record?
 
 ## 11. Implementation notes
 
-_Empty until Phase 0._
+### Phase 0 findings (2026-10-28)
+
+**Android — POCO F1, Android 12/API 32, Magisk, LSPosed 1.9.2 (Zygisk), Frida 17.18.0.** Captured as root from `/proc/<pid>` of `com.mekari.mobile_hardening_kit_example`; evidence kept outside the repo (session scratchpad `phase0-android/evidence/`). All rows verified on device.
+
+| Scenario | Threads | Maps | Other |
+|---|---|---|---|
+| Baseline (LSPosed active, nothing scoped) | ART/Flutter/Binder only | memfd only `jit-cache` (`r--s`, `r-xs`, `rw-s`); exec anon: `[anon:dart-code]`, `jit-zygote-cache`, `[vdso]`; 0 unnamed `rwxp` | TracerPid 0; 125 fds; mountinfo shows device-level Magisk/Zygisk/LSPosed bind mounts |
+| Frida attach | + `gum-js-loop`, `gmain`, `gdbus`, `pool-frida` | + 9 lines `/memfd:frida-agent-64.so` (7 `r-xp`); + 3–6 unnamed `rwxp` | TracerPid = frida-server pid for ~0.2–0.4 s at attach, then 0; + sockets/eventfds |
+| 5 s after detach | Frida threads gone | agent memfd gone; 3–5 unnamed `rwxp` remain | TracerPid 0; fds back to baseline |
+| Frida spawn (+4 s) | same four threads | same agent memfd; 4 unnamed `rwxp` | TracerPid 0 |
+| LSPosed module loaded (scoped to the example) | + `onPool-worker-1` (unattributed) | no lsposed/xposed/lspd/zygisk names; `libart.so` `r-xp` segments 1 → 15; + private `r-xp /memfd:jit-cache` | `Class.forName` of `XposedBridge`, `org.lsposed.lspd.*`, `io.github.libxposed.api.*` → `ClassNotFoundException` on app and system loaders; classes exist in a hidden loader (enumerable only via Frida); no xposed stack frames |
+| Module disabled (control) | as baseline | `libart.so` 1 segment | — |
+
+Notes: LSPosed Manager (parasitic) launches with `am start -c org.lsposed.manager.LAUNCH_MANAGER -n com.android.shell/.BugreportWarningActivity`. Frida 17 needs `frida-java-bridge` compiled into scripts for Java probes.
+
+**iOS — simulators 18.6 and 27.0 (Xcode 27).** Simulator-measured only; device dyld cache differs.
+
+- `_dyld_register_func_for_add_image` replays all loaded images (554 / 626) synchronously on the registering thread before returning (~27–31 ms with `dladdr`); a second registration replays again for the new callback only.
+- Later `dlopen` fires each callback once, before `dlopen` returns, on the caller's thread; `dlclose` fires the remove-image callback.
+- `dladdr` in the callback returns absolute paths; calling `_dyld_image_count` / `_dyld_get_image_name` inside did not deadlock.
+- Image scan: C-string `strcasestr` pass 1.2–3 ms median vs 3–48 ms for the current `[String]` + lowercase approach (host heavily loaded; ratios indicative).
+- `P_TRACED` false under `xcodebuild test`; true while lldb is attached to a simulator process, cleared after detach (via `ps`). `DYLD_INSERT_LIBRARIES` unset.
+
+Plan changes from these findings: §2 D7, §4.3 techniques, §5.2 and §5.3 tables, §10 untested coverage.
