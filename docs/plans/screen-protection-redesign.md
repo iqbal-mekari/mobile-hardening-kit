@@ -1,5 +1,3 @@
-**Classification: INTERNAL**
-
 # Screen protection redesign (0.3.0, breaking)
 
 Branch: `feat/screen-protection-redesign` · Target release: `0.3.0` · Status: implemented on branch; pending device verification and release
