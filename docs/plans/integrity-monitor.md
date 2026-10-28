@@ -84,6 +84,27 @@ Both getters return a single cached broadcast stream per kit instance (fixes tod
 - Diff key: signal type + sorted `techniques` + sorted `artifacts`; timestamps excluded.
 - Screen-event schema alignment: iOS `screenshotTaken` gains `source: "userDidTakeScreenshotNotification"` (keeps `active` for compatibility); iOS `observedAt` gains milliseconds to match Android.
 
+### 4.4 Contract details (binding for all implementers)
+
+**Native config and API**
+- Kotlin: `data class IntegrityMonitorConfig(val intervalMs: Long = 30_000, val checkOnResume: Boolean = true)`; effective interval `max(intervalMs, 5_000)`. `MobileHardeningKit.startMonitoring(config: IntegrityMonitorConfig, listener: HardeningSignalListener, hardeningConfig: HardeningConfig = HardeningConfig())`, `stopMonitoring()`, `checkIntegrityNow()`. Main thread; passes run on one background executor; results delivered on the main thread. Starting while monitoring replaces the previous session (stop, then start).
+- Swift: `public struct IntegrityMonitorConfig { public var interval: TimeInterval = 30; public var checkOnResume = true }` (clamped to ≥ 5 s); `startMonitoring(_ config: IntegrityMonitorConfig = .init(), handler: @escaping (HardeningSignal) -> Void)`, `stopMonitoring()`, `checkIntegrityNow()`. Same replace semantics.
+
+**Channel**
+- EventChannel `mobile_hardening_kit/integrity_events`; listen args `{intervalMs: int, checkOnResume: bool, expectedSigningCertificateSha256?: String, trustedAccessibilityPackages: [String]}` (iOS ignores the last two). Method `checkIntegrityNow` → null. Missing/invalid args → defaults.
+
+**Passes and tiers**
+- `full` tier = every `snapshot()` detector. `runtime` tier = `instrumentation` + `debuggerAttach` only.
+- `start` (full) on subscribe; `resume` (full) when the app returns to the foreground if `checkOnResume`; `interval` (runtime) while foregrounded; `manual` (full) from `checkIntegrityNow()`; iOS `imageLoad` (instrumentation only).
+- Diffing compares only the types the pass covers: a runtime pass never clears `root`. Key = type + sorted `techniques` + sorted `artifacts`. Same key → nothing emitted; different key → `changed`; new type → `detected`; type gone → `cleared` (with the last metadata). The first pass emits every finding as `detected`.
+
+**Metadata** (`snapshot()` also gains `techniques` on these types)
+- `instrumentation` (Android): `artifacts` (≤ 8 × 120 chars; maps paths and `thread:<name>` entries), `tracerPort` (API ≤ 28, else 0), `anonRwxCount`, `artTextSegments`, `techniques`. Reported only when a primary technique hits (`maps`, `threadName`, `memfdExec`, `artSegments`, `port`); `anonRwx` is supporting only.
+- `debuggerAttach` (Android): `debuggerConnected`, `tracerPid` (bool), `techniques` ⊆ {`jdwp`, `tracerPid`}. iOS: `traced: true`, `techniques: [pTraced]`.
+- `root` (Android): existing keys + `mountMarkers` (≤ 8), `techniques` ⊆ {`paths`, `buildTags`, `managerPackage`, `mountinfo`}. `jailbreak` (iOS): existing keys + `techniques` ⊆ {`paths`, `urlSchemes`}.
+- iOS `instrumentation`: `artifacts`, `techniques` ⊆ {`dyldImage`, `dyldImageLoad`}.
+- Monitor events add `change` and `trigger` (§4.3).
+
 ## 5. Platform mapping
 
 ### 5.1 When each tool enters the process
