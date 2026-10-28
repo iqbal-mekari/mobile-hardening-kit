@@ -12,12 +12,8 @@ import 'hardening_signal.dart';
 /// another. Non-map events are skipped; undecodable events surface as stream
 /// errors (for example [FormatException] for unknown signal types).
 class SharedEventStream {
-  SharedEventStream(
-    this._channel, {
-    Object? Function()? arguments,
-    void Function()? onIdle,
-  })  : _arguments = arguments,
-        _onIdle = onIdle {
+  SharedEventStream(this._channel, {Object? Function()? arguments})
+      : _arguments = arguments {
     _controller = StreamController<HardeningSignal>.broadcast(
       onListen: _subscribe,
       onCancel: _unsubscribe,
@@ -26,7 +22,6 @@ class SharedEventStream {
 
   final EventChannel _channel;
   final Object? Function()? _arguments;
-  final void Function()? _onIdle;
   late final StreamController<HardeningSignal> _controller;
   StreamSubscription<Object?>? _subscription;
 
@@ -46,7 +41,6 @@ class SharedEventStream {
   Future<void> _unsubscribe() async {
     final subscription = _subscription;
     _subscription = null;
-    _onIdle?.call();
     await subscription?.cancel();
   }
 

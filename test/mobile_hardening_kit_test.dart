@@ -336,14 +336,23 @@ void main() {
               .integrityEvents(),
       throwsStateError,
     );
-    expect(
-      () =>
-          MobileHardeningKit(trustedAccessibilityPackages: const <String>{'x'})
-              .integrityEvents(),
-      throwsStateError,
-    );
 
     await subscription.cancel();
+  });
+
+  test('re-listening to a held integrity stream keeps its config', () async {
+    final native = mockNative(integrityChannel);
+    final stream = MobileHardeningKit().integrityEvents(
+        const IntegrityMonitorConfig(interval: Duration(seconds: 45)));
+    await stream.listen((_) {}).cancel();
+    await pump();
+
+    final again = stream.listen((_) {});
+    await pump();
+
+    expect(native.listens, hasLength(2));
+    expect((native.listens.last! as Map)['intervalMs'], 45000);
+    await again.cancel();
   });
 
   test('integrityEvents allows a new config after the last listener cancels',

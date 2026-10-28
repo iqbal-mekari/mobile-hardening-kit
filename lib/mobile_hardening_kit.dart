@@ -33,7 +33,6 @@ class MobileHardeningKit {
   static final SharedEventStream _integrityShared = SharedEventStream(
     _integrityEvents,
     arguments: () => _integritySession?.arguments,
-    onIdle: () => _integritySession = null,
   );
   static _IntegritySession? _integritySession;
 
