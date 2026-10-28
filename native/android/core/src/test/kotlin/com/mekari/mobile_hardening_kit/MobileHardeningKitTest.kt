@@ -14,6 +14,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -27,6 +28,7 @@ import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.annotation.RealObject
 import org.robolectric.shadow.api.Shadow
+import org.robolectric.shadows.ShadowActivity
 import org.robolectric.shadows.ShadowDisplayManager
 import org.robolectric.util.ReflectionHelpers
 
@@ -42,6 +44,17 @@ class PresentationDisplayManagerShadow : ShadowDisplayManager() {
     Shadow.directlyOn(manager, DisplayManager::class.java).getDisplays(null)
 }
 
+/** Robolectric does not model Recents screenshots; record the last requested value (default true). */
+@Implements(Activity::class)
+class RecentsActivityShadow : ShadowActivity() {
+  var recentsOn = true
+
+  @Implementation
+  fun setRecentsScreenshotEnabled(enabled: Boolean) {
+    recentsOn = enabled
+  }
+}
+
 private class FakeFiles(
   private val existing: Set<String> = emptySet(),
   private val contents: Map<String, List<String>> = emptyMap()
@@ -52,7 +65,7 @@ private class FakeFiles(
 }
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33])
+@Config(sdk = [33], shadows = [RecentsActivityShadow::class])
 class MobileHardeningKitTest {
   private lateinit var context: Context
   private val originals = mutableMapOf<String, Any?>()
@@ -314,19 +327,45 @@ class MobileHardeningKitTest {
     kit().stopObserving()
   }
 
-  @Test
-  fun screenProtectionTogglesFlagSecureOnAttachedActivity() {
+  private val block = ScreenProtection(blockCapture = true)
+  private val whileCaptured = ScreenProtection(obscureWhileCaptured = true)
+  private val switcher = ScreenProtection(obscureAppSwitcher = true)
+  private val all = ScreenProtection(true, true, true)
+
+  private fun attached(kit: MobileHardeningKit = kit()): Pair<MobileHardeningKit, Activity> {
     val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-    val kit = kit()
     kit.attachActivity(activity)
+    return kit to activity
+  }
+
+  private fun state(captured: Boolean, whileCaptured: Boolean, switcher: Boolean, vararg unavailable: String) =
+    ScreenProtectionState(captured, whileCaptured, switcher, unavailable.toList())
+
+  @Test
+  fun offConstantAndStateMapUseChannelKeys() {
+    assertEquals(ScreenProtection(false, false, false), ScreenProtection.OFF)
+    assertEquals(
+      mapOf(
+        "captureBlocked" to true, "obscuresWhileCaptured" to false,
+        "obscuresAppSwitcher" to true, "unavailable" to listOf("x:y")
+      ),
+      state(true, false, true, "x:y").toMap()
+    )
+  }
+
+  @Test
+  @Config(sdk = [23])
+  fun blockCaptureTogglesFlagSecureAndRestoresOnDetach() {
+    val (kit, activity) = attached()
+    assertEquals(state(false, false, false), kit.setScreenProtection(ScreenProtection.OFF))
     assertFalse(isSecure(activity))
 
-    kit.setScreenProtectionEnabled(true)
+    assertEquals(state(true, false, false), kit.setScreenProtection(block))
     assertTrue(isSecure(activity))
-    kit.setScreenProtectionEnabled(false)
+    assertEquals(state(false, false, false), kit.setScreenProtection(ScreenProtection.OFF))
     assertFalse(isSecure(activity))
 
-    kit.setScreenProtectionEnabled(true)
+    kit.setScreenProtection(block)
     kit.detachActivity()
     assertFalse("detach restores the original non-secure state", isSecure(activity))
   }
@@ -337,21 +376,222 @@ class MobileHardeningKitTest {
     activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
     val kit = kit()
     kit.attachActivity(activity)
-    kit.setScreenProtectionEnabled(true)
-    kit.setScreenProtectionEnabled(false)
+    kit.setScreenProtection(block)
+    kit.setScreenProtection(ScreenProtection.OFF)
     assertTrue(isSecure(activity))
     kit.detachActivity()
     assertTrue(isSecure(activity))
   }
 
   @Test
-  fun protectionRequestedBeforeAttachAppliesOnAttach() {
-    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+  fun protectionRequestedBeforeAttachReportsNoActivityAndAppliesOnAttach() {
     val kit = kit()
-    kit.setScreenProtectionEnabled(true)
+    assertEquals(
+      state(false, false, false, "blockCapture:noActivity", "obscureWhileCaptured:noActivity", "obscureAppSwitcher:noActivity"),
+      kit.setScreenProtection(all)
+    )
+    assertEquals(state(false, false, false), kit.setScreenProtection(ScreenProtection.OFF))
+    kit.setScreenProtection(block)
+    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
     kit.attachActivity(activity)
     assertTrue(isSecure(activity))
   }
+
+  @Test
+  @Config(sdk = [23])
+  fun below33SwitcherNeedsBlockCaptureAndBelow35WhileCapturedNeedsBlockCapture() {
+    val (kit, _) = attached()
+    assertEquals(state(false, false, false, "obscureAppSwitcher:apiLevel"), kit.setScreenProtection(switcher))
+    assertEquals(state(false, false, false, "obscureWhileCaptured:apiLevel"), kit.setScreenProtection(whileCaptured))
+    assertEquals(state(true, true, true), kit.setScreenProtection(all))
+    assertEquals(
+      state(false, false, false, "obscureWhileCaptured:apiLevel", "obscureAppSwitcher:apiLevel"),
+      kit.setScreenProtection(ScreenProtection(false, true, true))
+    )
+  }
+
+  @Test
+  @Config(sdk = [32])
+  fun api32MatchesApi23Reporting() {
+    val (kit, _) = attached()
+    assertEquals(
+      state(false, false, false, "obscureWhileCaptured:apiLevel", "obscureAppSwitcher:apiLevel"),
+      kit.setScreenProtection(ScreenProtection(false, true, true))
+    )
+    assertEquals(state(true, true, true), kit.setScreenProtection(all))
+  }
+
+  @Test
+  @Config(sdk = [33])
+  fun api33UsesRecentsScreenshotSettingAndRestoresIt() {
+    val (kit, activity) = attached()
+    assertEquals(state(false, false, true), kit.setScreenProtection(switcher))
+    assertFalse(isSecure(activity))
+    assertFalse(recentsEnabled(activity))
+    assertEquals(state(false, false, false, "obscureWhileCaptured:apiLevel"), kit.setScreenProtection(whileCaptured))
+    assertTrue("turning the option off re-enables Recents", recentsEnabled(activity))
+
+    kit.setScreenProtection(switcher)
+    assertFalse(recentsEnabled(activity))
+    kit.detachActivity()
+    assertTrue("detach restores Recents", recentsEnabled(activity))
+  }
+
+  @Test
+  @Config(sdk = [33])
+  fun recentsIsUntouchedWhenNeverRequested() {
+    val (kit, activity) = attached()
+    kit.setScreenProtection(block)
+    kit.detachActivity()
+    assertTrue(recentsEnabled(activity))
+  }
+
+  @Test
+  @Config(sdk = [34])
+  fun api34StillLacksRecordingCallback() {
+    val (kit, _) = attached()
+    assertEquals(state(false, false, true, "obscureWhileCaptured:apiLevel"), kit.setScreenProtection(ScreenProtection(false, true, true)))
+    kit.startObserving { }
+    assertNull(ReflectionHelpers.getField<Any?>(kit, "recordingCallback"))
+    kit.stopObserving()
+  }
+
+  @Test
+  @Config(sdk = [35])
+  fun api35AppliesEveryOption() {
+    val (kit, activity) = attached()
+    assertEquals(state(false, true, true), kit.setScreenProtection(ScreenProtection(false, true, true)))
+    assertFalse(isSecure(activity))
+    assertFalse(recentsEnabled(activity))
+    assertEquals(state(true, true, true), kit.setScreenProtection(all))
+    assertTrue(isSecure(activity))
+    kit.detachActivity()
+    assertFalse(isSecure(activity))
+    assertTrue(recentsEnabled(activity))
+  }
+
+  @Test
+  @Config(sdk = [35])
+  fun recordingVisibilityAddsFlagSecureOnlyWhileVisible() {
+    val (kit, activity) = attached()
+    kit.setScreenProtection(whileCaptured)
+    val callback = recordingCallback(kit)
+    callback.accept(WindowManager.SCREEN_RECORDING_STATE_VISIBLE)
+    assertTrue(isSecure(activity))
+    callback.accept(WindowManager.SCREEN_RECORDING_STATE_VISIBLE)
+    assertTrue(isSecure(activity))
+    callback.accept(WindowManager.SCREEN_RECORDING_STATE_NOT_VISIBLE)
+    assertFalse(isSecure(activity))
+  }
+
+  @Test
+  @Config(sdk = [35])
+  fun recordingVisibilityDoesNotSecureWhenNotRequested() {
+    val (kit, activity) = attached()
+    kit.startObserving { }
+    recordingCallback(kit).accept(WindowManager.SCREEN_RECORDING_STATE_VISIBLE)
+    assertFalse(isSecure(activity))
+  }
+
+  @Test
+  @Config(sdk = [35])
+  fun recordingVisibleAndAlreadySecureWindowStaysSecureAfterRecording() {
+    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+    activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    val kit = kit()
+    kit.attachActivity(activity)
+    kit.setScreenProtection(whileCaptured)
+    recordingCallback(kit).accept(WindowManager.SCREEN_RECORDING_STATE_VISIBLE)
+    recordingCallback(kit).accept(WindowManager.SCREEN_RECORDING_STATE_NOT_VISIBLE)
+    assertTrue(isSecure(activity))
+  }
+
+  @Test
+  @Config(sdk = [35])
+  fun recordingCallbackIsSharedAndReleasedWhenNoLongerNeeded() {
+    val (kit, activity) = attached()
+    kit.setScreenProtection(whileCaptured)
+    val shared = recordingCallback(kit)
+    kit.startObserving { }
+    assertSame("observer and protection share one registration", shared, recordingCallback(kit))
+
+    kit.stopObserving()
+    assertNotNull("protection still needs it", ReflectionHelpers.getField<Any?>(kit, "recordingCallback"))
+    kit.setScreenProtection(ScreenProtection.OFF)
+    assertNull(ReflectionHelpers.getField<Any?>(kit, "recordingCallback"))
+
+    kit.startObserving { }
+    assertNotNull(ReflectionHelpers.getField<Any?>(kit, "recordingCallback"))
+    kit.detachActivity()
+    assertNull(ReflectionHelpers.getField<Any?>(kit, "recordingCallback"))
+    assertFalse(isSecure(activity))
+  }
+
+  @Test
+  @Config(sdk = [35])
+  fun recordingSignalsAreEmittedOnStateChangeWhileObserving() {
+    val (kit, _) = attached()
+    val received = mutableListOf<HardeningSignal>()
+    kit.startObserving { received += it }
+    val callback = recordingCallback(kit)
+    assertTrue("not visible initially, so nothing is emitted", received.none { it.type == HardeningSignalType.SCREEN_CAPTURE_ACTIVE })
+
+    callback.accept(WindowManager.SCREEN_RECORDING_STATE_VISIBLE)
+    callback.accept(WindowManager.SCREEN_RECORDING_STATE_VISIBLE)
+    callback.accept(WindowManager.SCREEN_RECORDING_STATE_NOT_VISIBLE)
+    val signals = received.filter { it.type == HardeningSignalType.SCREEN_CAPTURE_ACTIVE }
+    assertEquals(
+      listOf(true, false),
+      signals.map { it.metadata["active"] }
+    )
+    signals.forEach { assertEquals("screenRecordingCallback", it.metadata["source"]) }
+  }
+
+  @Test
+  @Config(sdk = [35])
+  fun protectionOnlyRecordingStateEmitsNothing() {
+    val (kit, _) = attached()
+    kit.setScreenProtection(whileCaptured)
+    recordingCallback(kit).accept(WindowManager.SCREEN_RECORDING_STATE_VISIBLE)
+  }
+
+  @Test
+  @Config(sdk = [35])
+  fun initialVisibleStateIsEmittedWhenObservingStartsLate() {
+    val (kit, _) = attached()
+    kit.setScreenProtection(whileCaptured)
+    recordingCallback(kit).accept(WindowManager.SCREEN_RECORDING_STATE_VISIBLE)
+    val received = mutableListOf<HardeningSignal>()
+    kit.startObserving { received += it }
+    assertEquals(listOf(true), received.map { it.metadata["active"] })
+  }
+
+  @Test
+  @Config(sdk = [35])
+  fun observingBeforeAttachRegistersRecordingCallbackOnAttach() {
+    val kit = kit()
+    kit.startObserving { }
+    assertNull(ReflectionHelpers.getField<Any?>(kit, "recordingCallback"))
+    attached(kit)
+    assertNotNull(ReflectionHelpers.getField<Any?>(kit, "recordingCallback"))
+  }
+
+  @Test
+  @Config(sdk = [34])
+  fun screenshotCallbackStaysScreenshotOnly() {
+    val (kit, _) = attached()
+    val received = mutableListOf<HardeningSignal>()
+    kit.startObserving { received += it }
+    ReflectionHelpers.getField<Activity.ScreenCaptureCallback>(kit, "screenshotCallback").onScreenCaptured()
+    assertEquals(listOf(HardeningSignalType.SCREENSHOT_TAKEN), received.map { it.type })
+  }
+
+  @Suppress("UNCHECKED_CAST")
+  private fun recordingCallback(kit: MobileHardeningKit) =
+    ReflectionHelpers.getField<java.util.function.Consumer<Int>>(kit, "recordingCallback")
+
+  private fun recentsEnabled(activity: Activity): Boolean =
+    (shadowOf(activity) as RecentsActivityShadow).recentsOn
 
   @Test
   fun detachWithoutAttachIsSafe() {

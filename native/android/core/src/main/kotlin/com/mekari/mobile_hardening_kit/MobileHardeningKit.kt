@@ -35,9 +35,13 @@ class MobileHardeningKit internal constructor(
     this.context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
   private var activity: Activity? = null
   private var listener: HardeningSignalListener? = null
-  private var screenProtectionEnabled = false
+  private var protection = ScreenProtection.OFF
   private var originalSecureFlag: Boolean? = null
+  private var recentsOverridden = false
+  private var recordingVisible = false
   private var screenshotCallback: Any? = null
+  private var recordingCallback: Any? = null
+  private var recordingWindowManager: WindowManager? = null
 
   /** Returns observations in detection order, at most one per type. Unsupported checks are omitted. */
   fun snapshot(config: HardeningConfig = HardeningConfig()): List<HardeningSignal> {
@@ -115,15 +119,24 @@ class MobileHardeningKit internal constructor(
   }
 
   /**
-   * Enables or disables FLAG_SECURE on the attached activity window. Opt-in, disabled by default.
-   * A window that was already secure before attach stays secure.
+   * Applies [protection] to the attached activity window and reports what was actually applied.
+   * Opt-in; [ScreenProtection.OFF] restores the window. Call from the main thread.
+   *
+   * Android mapping:
+   * - Effective FLAG_SECURE = `blockCapture` || the window was already secure before attach ||
+   *   (`obscureWhileCaptured` && a screen recording is visible, Android 15+).
+   * - `obscureAppSwitcher`: Android 13+ uses `setRecentsScreenshotEnabled(false)`. Below 13 it is reported
+   *   applied only when `blockCapture` is on (FLAG_SECURE already hides Recents), else `obscureAppSwitcher:apiLevel`.
+   * - `obscureWhileCaptured`: Android 15+ uses the screen-recording callback. Below 15 it is reported applied
+   *   only when `blockCapture` is on (FLAG_SECURE covers every recording), else `obscureWhileCaptured:apiLevel`.
+   * - No attached activity: requested options are reported as `<option>:noActivity` and re-applied by [attachActivity].
    */
-  fun setScreenProtectionEnabled(enabled: Boolean) {
-    screenProtectionEnabled = enabled
-    applyScreenProtection()
+  fun setScreenProtection(protection: ScreenProtection): ScreenProtectionState {
+    this.protection = protection
+    return applyScreenProtection()
   }
 
-  /** Binds the host activity for window protection and screenshot callbacks. */
+  /** Binds the host activity for window protection and capture callbacks. */
   fun attachActivity(target: Activity) {
     activity = target
     originalSecureFlag =
@@ -132,24 +145,29 @@ class MobileHardeningKit internal constructor(
     if (listener != null) registerScreenshotCallback(target)
   }
 
-  /** Unbinds the activity and restores its original FLAG_SECURE state. */
+  /** Unbinds the activity and restores its original FLAG_SECURE and Recents state. */
   fun detachActivity() {
     unregisterScreenshotCallback()
-    originalSecureFlag?.let { wasSecure ->
-      activity?.window?.let { window ->
-        if (wasSecure) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-      }
+    unregisterRecordingCallback()
+    activity?.let { target ->
+      if (recentsOverridden) setRecentsScreenshotEnabled(target, true)
+      originalSecureFlag?.let { setSecure(target, it) }
     }
+    recentsOverridden = false
     originalSecureFlag = null
     activity = null
   }
 
-  /** Starts delivering external-display changes and (Android 14+) screenshot events to [target]. */
+  /**
+   * Starts delivering external-display changes, screenshot events (Android 14+) and screen-recording
+   * state (Android 15+) to [target].
+   */
   fun startObserving(target: HardeningSignalListener) {
     listener = target
     displayManager.registerDisplayListener(this, null)
     activity?.let(::registerScreenshotCallback)
+    syncRecordingCallback()
+    if (recordingVisible) emitRecordingState()
   }
 
   /** Stops event delivery. Safe to call when not observing. */
@@ -157,6 +175,7 @@ class MobileHardeningKit internal constructor(
     listener = null
     displayManager.unregisterDisplayListener(this)
     unregisterScreenshotCallback()
+    syncRecordingCallback()
   }
 
   private fun listeningFridaPort(): Int? = runCatching {
@@ -192,11 +211,104 @@ class MobileHardeningKit internal constructor(
   private fun signal(type: String, metadata: Map<String, Any>) =
     HardeningSignal(type, isoTimestamp(), metadata)
 
-  private fun applyScreenProtection() {
-    activity?.window?.let { window ->
-      if (screenProtectionEnabled || originalSecureFlag == true) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-      else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+  private fun applyScreenProtection(): ScreenProtectionState {
+    val target = activity
+    if (target == null) {
+      return ScreenProtectionState(
+        captureBlocked = false,
+        obscuresWhileCaptured = false,
+        obscuresAppSwitcher = false,
+        unavailable = listOfNotNull(
+          "blockCapture:noActivity".takeIf { protection.blockCapture },
+          "obscureWhileCaptured:noActivity".takeIf { protection.obscureWhileCaptured },
+          "obscureAppSwitcher:noActivity".takeIf { protection.obscureAppSwitcher }
+        )
+      )
     }
+    syncRecordingCallback()
+    applyWindowFlag()
+
+    val recentsApi = Build.VERSION.SDK_INT >= 33
+    if (recentsApi && (protection.obscureAppSwitcher || recentsOverridden)) {
+      setRecentsScreenshotEnabled(target, !protection.obscureAppSwitcher)
+      recentsOverridden = protection.obscureAppSwitcher
+    }
+    val switcherApplied = protection.obscureAppSwitcher && (recentsApi || protection.blockCapture)
+    val whileCapturedApplied =
+      protection.obscureWhileCaptured && (Build.VERSION.SDK_INT >= 35 || protection.blockCapture)
+    return ScreenProtectionState(
+      captureBlocked = protection.blockCapture,
+      obscuresWhileCaptured = whileCapturedApplied,
+      obscuresAppSwitcher = switcherApplied,
+      unavailable = listOfNotNull(
+        "obscureWhileCaptured:apiLevel".takeIf { protection.obscureWhileCaptured && !whileCapturedApplied },
+        "obscureAppSwitcher:apiLevel".takeIf { protection.obscureAppSwitcher && !switcherApplied }
+      )
+    )
+  }
+
+  private fun applyWindowFlag() {
+    val target = activity ?: return
+    val whileRecording = protection.obscureWhileCaptured && recordingVisible
+    setSecure(target, protection.blockCapture || originalSecureFlag == true || whileRecording)
+  }
+
+  private fun setSecure(target: Activity, secure: Boolean) {
+    if (secure) target.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    else target.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+  }
+
+  @TargetApi(33)
+  private fun setRecentsScreenshotEnabled(target: Activity, enabled: Boolean) =
+    target.setRecentsScreenshotEnabled(enabled)
+
+  /** One shared registration serves both observation (listener) and protection (obscureWhileCaptured). */
+  private fun syncRecordingCallback() {
+    val target = activity
+    if (Build.VERSION.SDK_INT >= 35 && target != null && (listener != null || protection.obscureWhileCaptured)) {
+      registerRecordingCallback(target)
+    } else {
+      unregisterRecordingCallback()
+    }
+  }
+
+  @TargetApi(35)
+  private fun registerRecordingCallback(target: Activity) {
+    if (recordingCallback != null) return
+    val callback = java.util.function.Consumer<Int> { state -> onRecordingState(state) }
+    val manager = target.windowManager
+    recordingWindowManager = manager
+    recordingCallback = callback
+    onRecordingState(manager.addScreenRecordingCallback(target.mainExecutor, callback))
+  }
+
+  @TargetApi(35)
+  @Suppress("UNCHECKED_CAST")
+  private fun unregisterRecordingCallback() {
+    val callback = recordingCallback as? java.util.function.Consumer<Int> ?: return
+    recordingWindowManager?.removeScreenRecordingCallback(callback)
+    recordingCallback = null
+    recordingWindowManager = null
+    recordingVisible = false
+    applyWindowFlag()
+  }
+
+  @TargetApi(35) // Only reachable through the API 35 callback registration.
+  private fun onRecordingState(state: Int) {
+    val visible = state == WindowManager.SCREEN_RECORDING_STATE_VISIBLE
+    if (visible == recordingVisible) return
+    recordingVisible = visible
+    applyWindowFlag()
+    emitRecordingState()
+  }
+
+  private fun emitRecordingState() {
+    listener?.onSignal(
+      signal(
+        HardeningSignalType.SCREEN_CAPTURE_ACTIVE,
+        mapOf("active" to recordingVisible, "source" to "screenRecordingCallback")
+      )
+    )
   }
 
   @TargetApi(34)
