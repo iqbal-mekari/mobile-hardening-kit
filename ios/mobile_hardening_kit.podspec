@@ -11,7 +11,7 @@ Pod::Spec.new do |s|
   s.source_files = 'Classes/**/*.swift'
   s.resource_bundles = { 'mobile_hardening_kit_privacy' => ['Classes/Core/PrivacyInfo.xcprivacy'] }
   s.dependency 'Flutter'
-  s.platform = :ios, '13.0'
+  s.platform = :ios, '15.0'
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
   s.swift_version = '5.0'
 end

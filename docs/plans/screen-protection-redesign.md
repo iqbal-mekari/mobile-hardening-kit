@@ -69,7 +69,7 @@ Kotlin and Swift mirror these names: `ScreenProtection` data class/struct, `Scre
 | Option | Android | iOS |
 |---|---|---|
 | `blockCapture` | `FLAG_SECURE` on the attached activity window (existing logic; original flag restored on detach). Blanks screenshots, recordings, casting, Recents. | **Best-effort, unsupported by Apple.** Reparent `window.layer` under the secure-text-entry sublayer of an off-screen `UITextField`, toggle `isSecureTextEntry`. Skipped on `isiOSAppOnMac`. Restores the original layer tree on disable/teardown. |
-| `obscureWhileCaptured` | API 35+: `WindowManager.addScreenRecordingCallback`; add `FLAG_SECURE` while state is `SCREEN_RECORDING_STATE_VISIBLE`, restore after. Below 35: `unavailable` (`apiLevel`), unless `blockCapture` already covers it. | Cover the key window with an opaque view while capture is active. iOS 17+: scene capture state trait; iOS 13–16: `UIScreen.capturedDidChangeNotification` + `isCaptured`. Reactive: first frames may leak. |
+| `obscureWhileCaptured` | API 35+: `WindowManager.addScreenRecordingCallback`; add `FLAG_SECURE` while state is `SCREEN_RECORDING_STATE_VISIBLE`, restore after. Below 35: `unavailable` (`apiLevel`), unless `blockCapture` already covers it. | Cover the key window with an opaque view while capture is active. iOS 17+: scene capture state trait; iOS 15–16: `UIScreen.capturedDidChangeNotification` + `isCaptured`. Reactive: first frames may leak. |
 | `obscureAppSwitcher` | API 33+: `Activity.setRecentsScreenshotEnabled(false)`. Below 33: `unavailable` unless `blockCapture` is on (`FLAG_SECURE` already hides Recents). | Existing blur on `willResignActive`, removed on `didBecomeActive`. |
 
 Detection additions:
@@ -183,7 +183,7 @@ API 33+ paths (Recents opt-out) and the API 35 recording callback are covered by
 ### iOS SDK API findings
 
 - iOS 17+ scene capture state: `UITraitCollection.sceneCaptureState`, type `UISceneCaptureState`, trait `UITraitSceneCaptureState`.
-- `UIScreen.isCaptured` is to-be-deprecated; kept as the iOS 13-16 fallback.
+- `UIScreen.isCaptured` is to-be-deprecated; kept as the iOS 15-16 fallback.
 
 ### Open items
 

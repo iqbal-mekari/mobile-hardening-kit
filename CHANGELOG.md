@@ -5,6 +5,7 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Changed (breaking)
+- The iOS minimum deployment target is now 15.0 (was 13.0), the minimum of the Xcode 27 iPhoneOS SDK. This applies to the CocoaPods podspec and the SwiftPM package.
 - `setScreenProtectionEnabled` is removed from the Dart API, both native cores, and both Flutter adapters (the channel answers `notImplemented`). Use `setScreenProtection(ScreenProtection(...))`, which takes independent `blockCapture`, `obscureWhileCaptured`, and `obscureAppSwitcher` options and returns a `ScreenProtectionState`. See the README's "Migrating from 0.2.x" table: Android `true` becomes `blockCapture: true`, iOS `true` becomes `obscureAppSwitcher: true`, `false` becomes `ScreenProtection.off`.
 - The Android build requires Android Gradle Plugin 8.6.0, Gradle 8.7, and `compileSdk` 35 (AGP 7.x cannot read the SDK 35 `android.jar`). Consumers need AGP 8.6.0 or later, the tested combination; older AGP 8.x versions are unverified.
 - The library manifest now also merges `android.permission.DETECT_SCREEN_RECORDING` (normal permission) into consuming apps.
@@ -13,7 +14,7 @@ All notable changes to this project are documented here.
 - `setScreenProtection` reports what the platform actually applied: `captureBlocked`, `obscuresWhileCaptured`, `obscuresAppSwitcher`, and an `unavailable` list of `<option>:<reason>` entries for requested options it could not apply.
 - Android 13+ app-switcher opt-out through `Activity.setRecentsScreenshotEnabled(false)`, used by `obscureAppSwitcher`.
 - Android 15+ screen-recording state: `screenCaptureActive` events with `metadata.source` `screenRecordingCallback`, and `obscureWhileCaptured` adds `FLAG_SECURE` only while a recording is visible. The callback can miss scrcpy, `adb shell screenrecord`, and recordings that started before observation.
-- iOS capture state from the window-scene trait on iOS 17+ (`metadata.source` `sceneCaptureState`), falling back to `UIScreen.isCaptured` (`screenIsCaptured`) on earlier versions.
+- iOS capture state from the window-scene trait on iOS 17+ (`metadata.source` `sceneCaptureState`), falling back to `UIScreen.isCaptured` (`screenIsCaptured`) on iOS 15–16.
 - iOS opt-in `blockCapture`: best-effort capture blanking through a secure text field layer. It relies on undocumented UIKit behaviour, is not supported by Apple, and may break in any iOS release.
 - iOS opaque capture cover (identifier `mobile_hardening_kit_capture_cover_view`) shown while the screen is captured, used by `obscureWhileCaptured`. It is reactive; the first frames of a capture can leak.
 - CI enforces 95% line coverage on the new iOS core files `ScreenProtection.swift` and `SecureCaptureContainer.swift` as well as `MobileHardeningKit.swift`.

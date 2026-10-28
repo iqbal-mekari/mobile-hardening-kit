@@ -6,7 +6,7 @@ A dependency-light library that collects heuristic client-side integrity and dis
 
 - Flutter 3.24.0 or later
 - Android min SDK 23. Consumers need Android Gradle Plugin 8.6.0 or later and should compile against SDK 35 (the tested combination; older AGP 8.x versions are unverified, and AGP 7.x cannot read the SDK 35 `android.jar`).
-- iOS deployment target 13.0
+- iOS deployment target 15.0
 - No third-party Dart runtime dependencies. The only package development dependency besides Flutter SDK test tools is the Flutter-maintained `flutter_lints` analyzer rules package.
 
 ## Add the package
@@ -73,7 +73,7 @@ kit.detachActivity()
 
 Call all methods from the main thread. `detachActivity()` restores the window's original `FLAG_SECURE` and Recents state. Calling `setScreenProtection` before `attachActivity` reports the requested options as `<option>:noActivity`; they are re-applied when an activity is attached. The library manifest declares `DETECT_SCREEN_CAPTURE` (Android 14+ screenshot events), `DETECT_SCREEN_RECORDING` (Android 15+ screen-recording state), and the Magisk `<queries>` entry; both permissions are normal permissions and all three merge into your app.
 
-### iOS (Swift, iOS 13+)
+### iOS (Swift, iOS 15+)
 
 Swift Package Manager (root `Package.swift`, product `MobileHardeningKit`):
 
@@ -108,7 +108,7 @@ Both cores emit `HardeningSignal(type, observedAt, metadata)`; `toMap()` (Kotlin
 ### Native samples
 
 - **Android** — `example/android` (framework-only UI). It consumes the released AAR (`mhkVersion` in `gradle.properties`) from the GitHub Release assets, anonymously, using the attached Gradle module metadata: `cd example/android && ./gradlew :app:installDebug`, then launch "Hardening Kit Sample". To try unreleased source, run `./gradlew :core:publishReleasePublicationToMavenLocal -PlibraryVersion=<version>` in `native/android`, then build the sample with `-PmhkUseMavenLocal -PmhkVersion=<version>`.
-- **iOS** — `example/ios/MobileHardeningKitSample.xcodeproj` (SwiftUI, iOS 14+). It consumes the tagged sources of this repository through SPM (`https://github.com/iqbal-mekari/mobile-hardening-kit`, exact version pinned in the project): open it in Xcode and run on a simulator or device, or `xcodebuild -project example/ios/MobileHardeningKitSample.xcodeproj -scheme MobileHardeningKitSample -destination 'platform=iOS Simulator,name=iPhone 17' build`. To try unreleased source, edit the package reference to a branch or a local path in Xcode (do not commit that change).
+- **iOS** — `example/ios/MobileHardeningKitSample.xcodeproj` (SwiftUI, iOS 15+). It consumes the tagged sources of this repository through SPM (`https://github.com/iqbal-mekari/mobile-hardening-kit`, exact version pinned in the project): open it in Xcode and run on a simulator or device, or `xcodebuild -project example/ios/MobileHardeningKitSample.xcodeproj -scheme MobileHardeningKitSample -destination 'platform=iOS Simulator,name=iPhone 17' build`. To try unreleased source, edit the package reference to a branch or a local path in Xcode (do not commit that change).
 - **Flutter** — `example/flutter` (see below).
 
 Both show a snapshot, live events, and the opt-in protection toggle. Because they consume a published version, they demonstrate exactly what an app gets from a release; after each release, bump `mhkVersion` and the iOS package requirement. On the iOS simulator the `jailbreak` finding comes from host-shared paths such as `/usr/bin/ssh`; this is an expected heuristic false positive.
@@ -188,7 +188,7 @@ try {
 | Option | Android | iOS |
 | --- | --- | --- |
 | `blockCapture` | `FLAG_SECURE` on the attached activity window. Blanks screenshots, recordings, casting, and Recents. The window's original `FLAG_SECURE` state is restored on detach. | **Best-effort, not supported by Apple.** Hosts the key window's layer in the secure-text-entry sublayer of an off-screen `UITextField`. Skipped on an iOS app running on a Mac. The original layer tree is restored on disable and teardown. |
-| `obscureWhileCaptured` | API 35+: adds `FLAG_SECURE` only while `WindowManager.addScreenRecordingCallback` reports a visible screen recording, then restores it. Below 35: reported applied only if `blockCapture` is also on (it already covers recording), otherwise `unavailable` (`apiLevel`). | Covers the key window with an opaque view while the screen is recorded, mirrored, or AirPlayed. iOS 17+ uses the scene capture state; earlier versions use `UIScreen.isCaptured`. **Reactive: the first frames of a capture can leak.** |
+| `obscureWhileCaptured` | API 35+: adds `FLAG_SECURE` only while `WindowManager.addScreenRecordingCallback` reports a visible screen recording, then restores it. Below 35: reported applied only if `blockCapture` is also on (it already covers recording), otherwise `unavailable` (`apiLevel`). | Covers the key window with an opaque view while the screen is recorded, mirrored, or AirPlayed. iOS 17+ uses the scene capture state; iOS 15–16 use `UIScreen.isCaptured`. **Reactive: the first frames of a capture can leak.** |
 | `obscureAppSwitcher` | API 33+: `Activity.setRecentsScreenshotEnabled(false)`. Below 33: reported applied only if `blockCapture` is also on (`FLAG_SECURE` already hides Recents), otherwise `unavailable` (`apiLevel`). | Blurs the key window while the app is inactive and removes the blur when it becomes active. |
 
 ### `unavailable` reasons
@@ -343,7 +343,7 @@ Run the example in the iOS Simulator or on a test device. The simulator reports 
 | --- | --- |
 | `debuggerAttach` | Run the app from Xcode using the Debug configuration, or attach Xcode's debugger to the running app, then tap **Scan now**. |
 | `screenshotTaken` | On a physical iPhone/iPad, take a screenshot with the hardware buttons while the example is foregrounded. The notification arrives through the event stream. |
-| `screenCaptureActive` | Start screen recording or screen mirroring from Control Center; stop it to observe the state change. `metadata.source` is `sceneCaptureState` on iOS 17+ and `screenIsCaptured` earlier. |
+| `screenCaptureActive` | Start screen recording or screen mirroring from Control Center; stop it to observe the state change. `metadata.source` is `sceneCaptureState` on iOS 17+ and `screenIsCaptured` on iOS 15–16. |
 | `externalDisplay` | Connect an external display or start AirPlay mirroring, then observe the stream (or scan while it is connected). |
 | `jailbreak`, `instrumentation` | These need a jailbroken or instrumented test environment exposing one of the implementation's recognized artifacts. They have no standard Simulator trigger. |
 
