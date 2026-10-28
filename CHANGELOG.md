@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-28
+
+0.3.0 was never released; this release includes its screen-protection redesign.
+
 ### Changed (breaking)
 - The iOS minimum deployment target is now 15.0 (was 13.0), the minimum of the Xcode 27 iPhoneOS SDK. This applies to the CocoaPods podspec and the SwiftPM package.
 - `setScreenProtectionEnabled` is removed from the Dart API, both native cores, and both Flutter adapters (the channel answers `notImplemented`). Use `setScreenProtection(ScreenProtection(...))`, which takes independent `blockCapture`, `obscureWhileCaptured`, and `obscureAppSwitcher` options and returns a `ScreenProtectionState`. See the README's "Migrating from 0.2.x" table: Android `true` becomes `blockCapture: true`, iOS `true` becomes `obscureAppSwitcher: true`, `false` becomes `ScreenProtection.off`.
@@ -27,7 +31,7 @@ All notable changes to this project are documented here.
 - Integrity event metadata: `change`, `trigger`, and `techniques`, where `techniques` names the evidence source behind each finding.
 - Android detectors: thread names (`threadName`), `TracerPid` (`tracerPid`), executable private memfd mappings (`memfdExec`), anonymous RWX as supporting evidence only (`anonRwx`), libart text-segment split (`artSegments`, low confidence), Magisk/Zygisk mount markers (`mountinfo`), and the Frida listener port probe on API 28 and below (`port`).
 - iOS dyld image-load observer, registered once per process, emitting `trigger: imageLoad`, with `dyldImage`, `dyldImageLoad`, and `pTraced` evidence.
-- README sections for the integrity monitor (usage, timing table, `techniques` vocabulary, limits, untested coverage, data handling) and migration from 0.3.x.
+- README sections for the integrity monitor (usage, timing table, `techniques` vocabulary, limits, untested coverage, data handling) and migration from 0.2.x.
 
 ### Changed
 - The Flutter example adopts the UIScene lifecycle, which Xcode 27 builds require, and no longer needs the Podfile deployment-target override (the Flutter 3.47.8 engine pod declares iOS 15.0). Flutter is pinned per project with fvm (`.fvmrc`).

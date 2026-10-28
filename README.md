@@ -16,7 +16,7 @@ dependencies:
   mobile_hardening_kit:
     git:
       url: git@github.com:iqbal-mekari/mobile-hardening-kit.git
-      ref: 0.2.0
+      ref: 0.4.0
 ```
 
 ## Native integration (no Flutter)
@@ -42,7 +42,7 @@ repositories {
     }
   }
 }
-dependencies { implementation "com.mekari.mobile_hardening_kit:mobile-hardening-kit:0.2.0" }
+dependencies { implementation "com.mekari.mobile_hardening_kit:mobile-hardening-kit:0.4.0" }
 ```
 
 To build locally instead: `cd native/android && ./gradlew :core:publishReleasePublicationToMavenLocal`, then use `mavenLocal()`.
@@ -83,7 +83,7 @@ Call all methods from the main thread. `detachActivity()` restores the window's 
 Swift Package Manager (root `Package.swift`, product `MobileHardeningKit`):
 
 ```swift
-.package(url: "https://github.com/iqbal-mekari/mobile-hardening-kit", from: "0.2.0")
+.package(url: "https://github.com/iqbal-mekari/mobile-hardening-kit", from: "0.4.0")
 ```
 
 ```swift
@@ -338,28 +338,26 @@ The list is empty when every requested option was applied. Entries are `<option>
 - **Android recording callback gaps.** `obscureWhileCaptured` depends on the Android 15 recording callback and inherits its blind spots (scrcpy, `adb shell screenrecord`, recordings that started before observation). Use `blockCapture` for flows that must not be recorded.
 - **Out of scope.** Nothing here defeats an external camera, root/LSPosed/Frida modules that strip `FLAG_SECURE`, or jailbreak tweaks. Correlate with the `root` and `instrumentation` signals instead.
 
-## Migrating from 0.3.x to 0.4.0
-
-`stream` still works in 0.4.0 as a `@Deprecated` alias of `screenEvents`, and it is removed in 0.5.0. Native consumers of 0.3.x keep `startObserving` / `stopObserving`, which now cover screen events only. Toolchain and Android min SDK 24 changes are listed under [Requirements](#requirements).
-
-| 0.3.x | 0.4.0 |
-| --- | --- |
-| `kit.stream.listen(...)` | `kit.screenEvents.listen(...)` (`stream` still works, deprecated) |
-| Periodic `snapshot()` in app code | `kit.integrityEvents(IntegrityMonitorConfig(interval: ...)).listen(...)`; keep `snapshot()` for one-off reads |
-| `snapshot()` before a sensitive action | unchanged, or `checkIntegrityNow()` while monitoring |
-
 ## Migrating from 0.2.x
 
-`setScreenProtectionEnabled` is removed in 0.3.0 (the Flutter channel now answers `notImplemented` for it). Its boolean meant different things per platform, so there is no shorthand.
+0.3.0 was never released; 0.4.0 contains its screen-protection redesign together with the integrity monitor. Android consumers must move to AGP 9.0.1 or later, `compileSdk` 36, and min SDK 24; Flutter consumers need Flutter 3.47.8 / Dart 3.13.7 (see [Requirements](#requirements)).
 
-| 0.2.x | 0.3.0 equivalent |
+**Screen protection.** `setScreenProtectionEnabled` is removed (the Flutter channel now answers `notImplemented` for it). Its boolean meant different things per platform, so there is no shorthand.
+
+| 0.2.x | 0.4.0 equivalent |
 | --- | --- |
 | `setScreenProtectionEnabled(true)` on Android | `setScreenProtection(ScreenProtection(blockCapture: true))` |
 | `setScreenProtectionEnabled(true)` on iOS | `setScreenProtection(ScreenProtection(obscureAppSwitcher: true))` |
 | `setScreenProtectionEnabled(false)` | `setScreenProtection(ScreenProtection.off)` |
 | Recommended for sensitive flows | `ScreenProtection(blockCapture: true, obscureWhileCaptured: true, obscureAppSwitcher: true)` and check `state.unavailable` |
 
-Android consumers must also move to AGP 9.0.1 or later, `compileSdk` 36, and min SDK 24 (see Requirements).
+**Events and integrity checks.** `stream` still works in 0.4.0 as a `@Deprecated` alias of `screenEvents`, and it is removed in 0.5.0. Native `startObserving` / `stopObserving` now cover screen events only.
+
+| 0.2.x | 0.4.0 |
+| --- | --- |
+| `kit.stream.listen(...)` | `kit.screenEvents.listen(...)` (`stream` still works, deprecated) |
+| Periodic `snapshot()` in app code | `kit.integrityEvents(IntegrityMonitorConfig(interval: ...)).listen(...)`; keep `snapshot()` for one-off reads |
+| `snapshot()` before a sensitive action | unchanged, or `checkIntegrityNow()` while monitoring |
 
 ## Example
 

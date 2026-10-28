@@ -4,7 +4,7 @@ apply plugin: "jacoco"
 
 group = "com.mekari.mobile_hardening_kit"
 // The release workflow passes the tag as -PlibraryVersion; keep the default in sync with pubspec.yaml.
-version = findProperty("libraryVersion") ?: "0.2.0"
+version = findProperty("libraryVersion") ?: "0.4.0"
 
 android {
     namespace = "com.mekari.mobile_hardening_kit"
