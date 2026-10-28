@@ -166,8 +166,10 @@ class MobileHardeningKit internal constructor(
     listener = target
     displayManager.registerDisplayListener(this, null)
     activity?.let(::registerScreenshotCallback)
+    // A fresh registration already emits its initial state; replay only for an existing one.
+    val recordingAlreadyRegistered = recordingCallback != null
     syncRecordingCallback()
-    if (recordingVisible) emitRecordingState()
+    if (recordingAlreadyRegistered && recordingVisible) emitRecordingState()
   }
 
   /** Stops event delivery. Safe to call when not observing. */
