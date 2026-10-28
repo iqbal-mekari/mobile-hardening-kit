@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/iqbal-mekari/mobile-hardening-kit",
       "state" : {
-        "revision" : "7b564a0e46afd9c4e866ba90716611b220e7d2bf",
-        "version" : "0.2.0"
+        "revision" : "89919c21c584ea76d87c08819b98c81630e60a31",
+        "version" : "0.4.0"
       }
     }
   ],

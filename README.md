@@ -120,7 +120,7 @@ Both cores emit `HardeningSignal(type, observedAt, metadata)`; `toMap()` (Kotlin
 - **iOS** — `example/ios/MobileHardeningKitSample.xcodeproj` (SwiftUI, iOS 15+). It consumes the tagged sources of this repository through SPM (`https://github.com/iqbal-mekari/mobile-hardening-kit`, exact version pinned in the project): open it in Xcode and run on a simulator or device, or `xcodebuild -project example/ios/MobileHardeningKitSample.xcodeproj -scheme MobileHardeningKitSample -destination 'platform=iOS Simulator,name=iPhone 17' build`. To try unreleased source, edit the package reference to a branch or a local path in Xcode (do not commit that change).
 - **Flutter** — `example/flutter` (see below).
 
-Both show a snapshot, live events, and the opt-in protection toggle. Because they consume a published version, they demonstrate exactly what an app gets from a release; after each release, bump `mhkVersion` and the iOS package requirement. On the iOS simulator the `jailbreak` finding comes from host-shared paths such as `/usr/bin/ssh`; this is an expected heuristic false positive.
+Both show a snapshot, live events, the opt-in protection toggle (with the returned state), and an opt-in integrity monitor toggle. Because they consume a published version, they demonstrate exactly what an app gets from a release; after each release, bump `mhkVersion` and the iOS package requirement. On the iOS simulator the `jailbreak` finding comes from host-shared paths such as `/usr/bin/ssh`; this is an expected heuristic false positive.
 
 ## Collect signals
 
