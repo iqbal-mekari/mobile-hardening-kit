@@ -5,7 +5,7 @@ A dependency-light library that collects heuristic client-side integrity and dis
 ## Requirements
 
 - Flutter 3.24.0 or later
-- Android min SDK 23
+- Android min SDK 23. Consumers need Android Gradle Plugin 8.6.0 or later and should compile against SDK 35 (the tested combination; older AGP 8.x versions are unverified, and AGP 7.x cannot read the SDK 35 `android.jar`).
 - iOS deployment target 13.0
 - No third-party Dart runtime dependencies. The only package development dependency besides Flutter SDK test tools is the Flutter-maintained `flutter_lints` analyzer rules package.
 
@@ -59,13 +59,19 @@ val signals = kit.snapshot(
 // Optional: events and opt-in FLAG_SECURE need the host activity.
 kit.attachActivity(activity)          // onCreate/onStart; pair with detachActivity() in onDestroy
 kit.startObserving { signal -> /* HardeningSignal */ }
-kit.setScreenProtectionEnabled(true)  // sensitive flow only
+// Sensitive flow only; every option is opt-in and independent.
+val state = kit.setScreenProtection(
+  ScreenProtection(blockCapture = true, obscureWhileCaptured = true, obscureAppSwitcher = true)
+)
+// state.captureBlocked, state.obscuresWhileCaptured, state.obscuresAppSwitcher
+// state.unavailable: "<option>:<reason>" entries for options the platform could not apply
 // ...
+kit.setScreenProtection(ScreenProtection.OFF)
 kit.stopObserving()
 kit.detachActivity()
 ```
 
-Call all methods from the main thread. `detachActivity()` restores the window's original `FLAG_SECURE` state. The library manifest declares `DETECT_SCREEN_CAPTURE` (normal permission, needed for Android 14+ screenshot events) and the Magisk `<queries>` entry; both merge into your app.
+Call all methods from the main thread. `detachActivity()` restores the window's original `FLAG_SECURE` and Recents state. Calling `setScreenProtection` before `attachActivity` reports the requested options as `<option>:noActivity`; they are re-applied when an activity is attached. The library manifest declares `DETECT_SCREEN_CAPTURE` (Android 14+ screenshot events), `DETECT_SCREEN_RECORDING` (Android 15+ screen-recording state), and the Magisk `<queries>` entry; both permissions are normal permissions and all three merge into your app.
 
 ### iOS (Swift, iOS 13+)
 
@@ -81,8 +87,15 @@ import MobileHardeningKit
 let kit = MobileHardeningKit()
 let signals = kit.snapshot()                 // [HardeningSignal]
 kit.startObserving { signal in /* capture, screenshot, external display changes */ }
-kit.setScreenProtectionEnabled(true)         // sensitive flow only; blurs the app-switcher snapshot
+
+// Sensitive flow only; every option is opt-in and independent.
+let state = kit.setScreenProtection(
+  ScreenProtection(obscureWhileCaptured: true, obscureAppSwitcher: true)
+)
+// state.captureBlocked, state.obscuresWhileCaptured, state.obscuresAppSwitcher
+// state.unavailable: "<option>:<reason>" entries, e.g. "blockCapture:windowNotReady"
 // ...
+kit.setScreenProtection(.off)
 kit.stopObserving()
 ```
 
@@ -140,25 +153,73 @@ Set `expectedSigningCertificateSha256` to the signing certificate's SHA-256 dige
 | Signature integrity | SHA-256 of installed signing certificate compared with caller-supplied fingerprint | Detects absence of Mach-O code-signature command only; cannot expose/compare signing certificate fingerprint |
 | Emulator / simulator | Multiple build-property heuristics | Simulator build environment |
 | Accessibility / developer settings | Reports enabled external accessibility packages not caller-trusted, developer options, or ADB | Not exposed by the platform APIs used here |
-| Capture / display | Android 14+ screenshot callback while the signal stream is listened to; secondary presentation displays (virtual displays included) | Screen recording/mirroring state, screenshot event, and external display connection events |
-| Protection helper | `FLAG_SECURE` on attached Flutter window | Blurred app-switcher snapshot while app is backgrounded; does not prevent screenshots or screen recording |
+| Capture / display | Android 14+ screenshot callback and Android 15+ screen-recording state (`screenCaptureActive`, `source: screenRecordingCallback`) while the signal stream is listened to; secondary presentation displays (virtual displays included) | Screen recording/mirroring state (`screenCaptureActive`, `source`: `sceneCaptureState` on iOS 17+, else `screenIsCaptured`), screenshot event, and external display connection events |
+| Protection helper | Per-option, see [Screen protection](#screen-protection): `FLAG_SECURE` on the attached window, Android 15+ recording-time obscuring, Android 13+ Recents opt-out | Per-option: app-switcher blur, reactive capture cover, and opt-in best-effort capture blanking (unsupported by Apple) |
 
-Detection limitations and false positives are expected. A rooted device may hide artefacts; legitimate development builds, emulators (including their virtual presentation displays), accessibility services, screen sharing, and external displays can produce signals. Android screenshot event detection requires API 34+; screen protection via `FLAG_SECURE` works from min SDK 23. Generic Android screen-recording app detection is not available to ordinary apps and is not claimed.
+Detection limitations and false positives are expected. A rooted device may hide artefacts; legitimate development builds, emulators (including their virtual presentation displays), accessibility services, screen sharing, and external displays can produce signals. Android screenshot event detection requires API 34+; screen-recording state events require API 35+ and `DETECT_SCREEN_RECORDING`. Known limitation (per Guardsquare research): the Android 15 recording callback can miss capture that does not go through the system recorder, such as scrcpy and `adb shell screenrecord`, and recordings that started before observation began. Generic Android screen-recording app detection is not available to ordinary apps and is not claimed. `FLAG_SECURE` works from min SDK 23.
 
-## Opt-in display protection
+## Screen protection
 
-Protection is disabled by default. Enable it only around product-selected sensitive flows, then restore it when leaving that flow:
+Protection is disabled by default. Every option is independent; enable them only around product-selected sensitive flows, then restore them when leaving that flow. `setScreenProtection` returns the state the platform actually applied, so check `unavailable` instead of assuming a request took effect.
 
 ```dart
-await hardening.setScreenProtectionEnabled(true);
+final state = await hardening.setScreenProtection(
+  const ScreenProtection(
+    blockCapture: true,
+    obscureWhileCaptured: true,
+    obscureAppSwitcher: true,
+  ),
+);
+if (state.unavailable.isNotEmpty) {
+  // e.g. ['obscureWhileCaptured:apiLevel'] or ['blockCapture:windowNotReady'].
+  // Decide in app code whether to proceed; the kit never blocks a flow.
+}
 try {
   await showSensitiveFlow();
 } finally {
-  await hardening.setScreenProtectionEnabled(false);
+  await hardening.setScreenProtection(ScreenProtection.off);
 }
 ```
 
-Android applies `FLAG_SECURE` to the attached Flutter activity window (so it affects that whole window). iOS adds a blur overlay only during app-switcher snapshot capture. iOS does not provide a supported API to block user screenshots; the helper only obscures the background snapshot.
+`ScreenProtectionState` has `captureBlocked`, `obscuresWhileCaptured`, `obscuresAppSwitcher`, and `unavailable` (a list of `<option>:<reason>` strings).
+
+### Platform mapping
+
+| Option | Android | iOS |
+| --- | --- | --- |
+| `blockCapture` | `FLAG_SECURE` on the attached activity window. Blanks screenshots, recordings, casting, and Recents. The window's original `FLAG_SECURE` state is restored on detach. | **Best-effort, not supported by Apple.** Hosts the key window's layer in the secure-text-entry sublayer of an off-screen `UITextField`. Skipped on an iOS app running on a Mac. The original layer tree is restored on disable and teardown. |
+| `obscureWhileCaptured` | API 35+: adds `FLAG_SECURE` only while `WindowManager.addScreenRecordingCallback` reports a visible screen recording, then restores it. Below 35: reported applied only if `blockCapture` is also on (it already covers recording), otherwise `unavailable` (`apiLevel`). | Covers the key window with an opaque view while the screen is recorded, mirrored, or AirPlayed. iOS 17+ uses the scene capture state; earlier versions use `UIScreen.isCaptured`. **Reactive: the first frames of a capture can leak.** |
+| `obscureAppSwitcher` | API 33+: `Activity.setRecentsScreenshotEnabled(false)`. Below 33: reported applied only if `blockCapture` is also on (`FLAG_SECURE` already hides Recents), otherwise `unavailable` (`apiLevel`). | Blurs the key window while the app is inactive and removes the blur when it becomes active. |
+
+### `unavailable` reasons
+
+The list is empty when every requested option was applied. Entries are `<option>:<reason>`; the reasons each platform emits are:
+
+| Platform | Reasons |
+| --- | --- |
+| Android | `noActivity` (no activity attached yet; re-applied on `attachActivity`), `apiLevel` (`obscureWhileCaptured` below API 35 or `obscureAppSwitcher` below API 33, without `blockCapture`) |
+| iOS | `iosAppOnMac`, `noWindow`, `windowNotReady`, `secureLayerUnavailable` (all for `blockCapture`; `noWindow` and `windowNotReady` are retried each time the app becomes active, and the core's `screenProtectionState` reflects the retry) |
+
+### Warnings and limits
+
+- **iOS `blockCapture` is best-effort.** It relies on undocumented UIKit behaviour, is **not supported by Apple**, and may stop working or misbehave in any iOS release. Never describe it as a guarantee, and verify it on the iOS versions you ship.
+- **iOS `obscureWhileCaptured` is reactive.** The cover appears after the system reports capture, so the first frames can leak.
+- **Android `FLAG_SECURE` is per window.** Flutter dialogs and bottom sheets render in the Flutter activity's window and are covered. Native dialogs, `PopupWindow`s, Toasts, separate activities, and `SurfaceView`s are not: give them their own `FLAG_SECURE` (or `SurfaceView.setSecure(true)`).
+- **Android recording callback gaps.** `obscureWhileCaptured` depends on the Android 15 recording callback and inherits its blind spots (scrcpy, `adb shell screenrecord`, recordings that started before observation). Use `blockCapture` for flows that must not be recorded.
+- **Out of scope.** Nothing here defeats an external camera, root/LSPosed/Frida modules that strip `FLAG_SECURE`, or jailbreak tweaks. Correlate with the `root` and `instrumentation` signals instead.
+
+## Migrating from 0.2.x
+
+`setScreenProtectionEnabled` is removed in 0.3.0 (the Flutter channel now answers `notImplemented` for it). Its boolean meant different things per platform, so there is no shorthand.
+
+| 0.2.x | 0.3.0 equivalent |
+| --- | --- |
+| `setScreenProtectionEnabled(true)` on Android | `setScreenProtection(ScreenProtection(blockCapture: true))` |
+| `setScreenProtectionEnabled(true)` on iOS | `setScreenProtection(ScreenProtection(obscureAppSwitcher: true))` |
+| `setScreenProtectionEnabled(false)` | `setScreenProtection(ScreenProtection.off)` |
+| Recommended for sensitive flows | `ScreenProtection(blockCapture: true, obscureWhileCaptured: true, obscureAppSwitcher: true)` and check `state.unavailable` |
+
+Android consumers must also move to AGP 8.6.0 or later (see Requirements).
 
 ## Example
 
@@ -270,7 +331,7 @@ Make sure the test value differs from the app's actual signing-certificate finge
 
 Restore `MobileHardeningKit()` after the test; do not commit the test fingerprint.
 
-Android does not expose a general screen-recording-active signal to ordinary apps. The Android screenshot callback only reports user screenshot events on API 34+ while the example's stream is subscribed.
+Android 15+ reports screen-recording state as `screenCaptureActive` (`source: screenRecordingCallback`) while the example's stream is subscribed; it can miss scrcpy, `adb shell screenrecord`, and recordings that started before observation. The Android screenshot callback only reports user screenshot events on API 34+ while the example's stream is subscribed.
 
 ### iOS
 
@@ -282,7 +343,7 @@ Run the example in the iOS Simulator or on a test device. The simulator reports 
 | --- | --- |
 | `debuggerAttach` | Run the app from Xcode using the Debug configuration, or attach Xcode's debugger to the running app, then tap **Scan now**. |
 | `screenshotTaken` | On a physical iPhone/iPad, take a screenshot with the hardware buttons while the example is foregrounded. The notification arrives through the event stream. |
-| `screenCaptureActive` | Start screen recording or screen mirroring from Control Center; stop it to observe the state change. |
+| `screenCaptureActive` | Start screen recording or screen mirroring from Control Center; stop it to observe the state change. `metadata.source` is `sceneCaptureState` on iOS 17+ and `screenIsCaptured` earlier. |
 | `externalDisplay` | Connect an external display or start AirPlay mirroring, then observe the stream (or scan while it is connected). |
 | `jailbreak`, `instrumentation` | These need a jailbroken or instrumented test environment exposing one of the implementation's recognized artifacts. They have no standard Simulator trigger. |
 
@@ -290,7 +351,7 @@ The iOS `signatureMismatch` check only reports a missing Mach-O code-signature c
 
 ### Test the separate screen-protection helper
 
-The **Protect sensitive display content** switch is independent of signal detection. On Android it enables `FLAG_SECURE` for the app window, preventing screenshots while enabled. On iOS it blurs the app-switcher snapshot; it does not block screenshots or recording. Turn protection off before testing screenshot signals.
+The **Protect sensitive display content** switch is independent of signal detection. The Flutter sample applies all three options (`blockCapture`, `obscureWhileCaptured`, `obscureAppSwitcher`) and lists any `unavailable` entries. On Android, `blockCapture` sets `FLAG_SECURE` for the app window, preventing screenshots while enabled. On iOS, the app-switcher blur and reactive capture cover apply; `blockCapture` is best-effort and not supported by Apple. Turn protection off before testing screenshot signals. The two screenshots below were captured with the 0.2.x single toggle (Android `FLAG_SECURE`, iOS app-switcher blur).
 
 With protection enabled and the app switcher open, the POCO F1 (Android 12/API 32) showed a blank app preview, while the iPhone 17 Pro Simulator (iOS 26.4) showed an obscured snapshot:
 

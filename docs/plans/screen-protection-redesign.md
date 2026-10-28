@@ -2,7 +2,7 @@
 
 # Screen protection redesign (0.3.0, breaking)
 
-Branch: `feat/screen-protection-redesign` · Target release: `0.3.0` · Status: plan, not started
+Branch: `feat/screen-protection-redesign` · Target release: `0.3.0` · Status: implemented on branch; pending device verification and release
 
 ## 1. Goal
 
@@ -165,3 +165,31 @@ Exit: a short findings note appended to this plan; any failing assumption change
 1. Who signs the risk acceptance for the iOS secure-field technique (product owner / security)?
 2. Minimum device matrix for the release gate (which physical Android 15/16 and iOS 16–26 devices are available)?
 3. Should `obscureWhileCaptured` on iOS use a blur or an opaque/branded cover (opaque leaks less)?
+
+## 11. Implementation notes
+
+### Toolchain (D5)
+
+AGP 8.6.0, Gradle 8.7, Kotlin 1.8.22, Robolectric 4.14.1, `compileSdk = 35`.
+
+### Android device result
+
+POCO F1, Android 12 / API 32, `blockCapture` (FLAG_SECURE):
+- on: `screencap` output empty, `screenrecord` output black.
+- off: normal capture.
+
+API 33+ paths (Recents opt-out) and the API 35 recording callback are covered by Robolectric only; not yet verified on a device.
+
+### iOS SDK API findings
+
+- iOS 17+ scene capture state: `UITraitCollection.sceneCaptureState`, type `UISceneCaptureState`, trait `UITraitSceneCaptureState`.
+- `UIScreen.isCaptured` is to-be-deprecated; kept as the iOS 13-16 fallback.
+
+### Open items
+
+- Physical-iOS verification matrix (Phase 0 step 3): screenshot, Control Center recording, AirPlay mirroring, QuickTime over USB, on iOS 16, 17, 18, and 26.
+- Android 13, 14, and 15 on-device verification (Recents opt-out, screenshot callback, recording callback).
+- Flutter release APK build needs Rosetta or CI: Flutter 3.24 `gen_snapshot` is x64.
+- Xcode 27 rejects an iOS 13 deployment target, and Flutter 3.24 needs `FLUTTER_XCODE_ARCHS=arm64` with Xcode 27.
+- The iOS 27 simulator requires the UIScene lifecycle for the Flutter example.
+- Risk acceptance for the iOS secure-field technique (section 10, question 1) and the release device matrix (question 2) remain open.
