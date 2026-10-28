@@ -141,7 +141,8 @@ internal class IntegrityMonitor(
     fun event(type: String, at: String, metadata: Map<String, Any>, change: String) {
       events += HardeningSignal(type, at, metadata + mapOf("change" to change, "trigger" to trigger))
     }
-    for (signal in found) {
+    // Screen and display types belong to the screen-events stream only; snapshot() still returns them.
+    for (signal in found.filter { it.type in covered }) {
       val key = keyOf(signal)
       val previous = last[signal.type]
       last[signal.type] = key to signal.metadata
@@ -185,8 +186,7 @@ internal class IntegrityMonitor(
     val FULL_TYPES = listOf(
       HardeningSignalType.ROOT, HardeningSignalType.INSTRUMENTATION, HardeningSignalType.DEBUGGER_ATTACH,
       HardeningSignalType.SIGNATURE_MISMATCH, HardeningSignalType.EMULATOR,
-      HardeningSignalType.ACCESSIBILITY_UNRECOGNIZED, HardeningSignalType.DEV_MODE_ENABLED,
-      HardeningSignalType.EXTERNAL_DISPLAY
+      HardeningSignalType.ACCESSIBILITY_UNRECOGNIZED, HardeningSignalType.DEV_MODE_ENABLED
     )
   }
 }

@@ -84,7 +84,11 @@ final class IntegrityMonitor {
     _ types: Set<HardeningSignalType>, _ loads: (_ listed: [String]) -> [ImageLoad]
   ) -> [HardeningSignal]
 
-  static let fullTier = Set(MobileHardeningKit.detectionOrder)
+  /// Everything `snapshot()` detects except the screen and display types, which belong to the
+  /// screen-events stream only.
+  static let fullTier = Set(MobileHardeningKit.detectionOrder).subtracting([
+    .screenCaptureActive, .externalDisplay,
+  ])
   static let runtimeTier: Set<HardeningSignalType> = [.instrumentation, .debuggerAttach]
   static let imageLoadTier: Set<HardeningSignalType> = [.instrumentation]
 

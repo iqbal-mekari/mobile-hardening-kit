@@ -97,6 +97,21 @@ final class IntegrityMonitorTests: XCTestCase {
     #endif
   }
 
+  func testScreenAndDisplayTypesStayOffTheIntegrityStream() {
+    probe.capture.captured = true
+    probe.screenCount = 2
+    probe.imageNames = [gadget]
+    start()
+    XCTAssertEqual(summary(take()), ["instrumentation:detected:start"])
+
+    probe.capture.captured = false
+    probe.screenCount = 1
+    kit.checkIntegrityNow()
+    XCTAssertTrue(received.isEmpty, "\(summary(received))")
+    XCTAssertFalse(IntegrityMonitor.fullTier.contains(.screenCaptureActive))
+    XCTAssertFalse(IntegrityMonitor.fullTier.contains(.externalDisplay))
+  }
+
   func testUnchangedPassesStaySilent() {
     probe.imageNames = [gadget]
     start()
@@ -165,10 +180,7 @@ final class IntegrityMonitorTests: XCTestCase {
     kit.checkIntegrityNow()
     XCTAssertEqual(
       summary(take()),
-      [
-        "externalDisplay:detected:manual", "signatureMismatch:detected:manual",
-        "jailbreak:cleared:manual",
-      ])
+      ["signatureMismatch:detected:manual", "jailbreak:cleared:manual"])
   }
 
   func testTheIntervalIsClampedAndUsesTheConfiguredValue() {

@@ -112,6 +112,25 @@ class IntegrityMonitorTest {
 
   private fun changes() = received.map { Triple(it.type, it.metadata["change"], it.metadata["trigger"]) }
 
+  @Test
+  fun screenAndDisplayTypesNeverReachTheIntegrityStreamNorClear() {
+    val display = sig(HardeningSignalType.EXTERNAL_DISPLAY)
+    val capture = sig(HardeningSignalType.SCREEN_CAPTURE_ACTIVE)
+    scanned = listOf(root, display, capture)
+    val monitor = monitor()
+    monitor.start(null)
+    fake.flush()
+    assertEquals(listOf(Triple("root", "detected", "start")), changes())
+
+    scanned = listOf(root)
+    monitor.checkNow()
+    scanned = listOf(root, display)
+    monitor.checkNow()
+    fake.flush()
+    assertEquals(1, received.size)
+    monitor.stop()
+  }
+
   // --- diffing ----------------------------------------------------------------------------------
 
   @Test
