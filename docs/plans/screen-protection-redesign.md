@@ -79,7 +79,7 @@ Detection additions:
 | Risk area | Risk | Mitigation |
 |---|---|---|
 | Platform stability | iOS secure-field technique depends on undocumented sublayer order (`first` < iOS 17, `last` ≥ 17) and has known crash/layout issues (iOS 26 circular hierarchy, RTL shift, Mac host blanking) | Off by default; validate the target sublayer exists before reparenting else report `secureLayerUnavailable`; add/remove field from window before reparenting; force LTR; per-iOS-release device matrix gate before each release |
-| App Review | Use of undocumented UIKit behaviour (no private API symbols). ASSUMPTION: low rejection risk, no documented rejections found | Product owner risk acceptance recorded in PR; README states "not supported by Apple" |
+| App Review | Use of undocumented UIKit behaviour (no private API symbols). ASSUMPTION: low rejection risk, no documented rejections found | Risk accepted by the repository owner on 2026-10-28 for release 0.4.0 (see §10); README states "not supported by Apple" |
 | Data exposure | Reactive cover leaks initial frames; Android 15 callback misses scrcpy / `screenrecord` / pre-existing recordings; `FLAG_SECURE` is per window (dialogs, popups, separate native windows) | Document limits; recommend `blockCapture` for sensitive flows; Android dialog guidance |
 | Device trust | Root/LSPosed/Frida strip `FLAG_SECURE`; jailbreak tweaks | Out of scope; consumers correlate with `root` / `instrumentation` signals |
 | Build/toolchain | `addScreenRecordingCallback` needs `compileSdk = 35`; compatibility with pinned Flutter 3.24.0 / its AGP and Robolectric SDK 35 support is **unverified** | Phase 0 spike; bump `compileSdk` in `native/android/core/build.gradle` and `android/build.gradle` |
@@ -160,7 +160,7 @@ Exit: a short findings note appended to this plan; any failing assumption change
 
 ## 10. Open questions
 
-1. Who signs the risk acceptance for the iOS secure-field technique (product owner / security)?
+1. ~~Who signs the risk acceptance for the iOS secure-field technique (product owner / security)?~~ **Resolved 2026-10-28:** the repository owner accepted the risk for release 0.4.0. Conditions: `blockCapture` stays off by default, opt-in, best-effort, and documented as unsupported by Apple; it is never described as guaranteed; the physical-iPhone matrix (iOS 16, 17, 18, 26) remains untested and must be re-checked, and this acceptance re-reviewed, before relying on it in a production app and at each new iOS major release.
 2. Minimum device matrix for the release gate (which physical Android 15/16 and iOS 16–26 devices are available)?
 3. Should `obscureWhileCaptured` on iOS use a blur or an opaque/branded cover (opaque leaks less)?
 
